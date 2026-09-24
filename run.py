@@ -22,7 +22,7 @@ sys.path.insert(0, BASE_DIR)
 
 from backend.app import app, get_lan_ip
 
-PORT = 8000
+PORT = int(os.environ.get("PORT", 8000))
 
 def open_browser():
     time.sleep(1.8)
@@ -45,5 +45,6 @@ if __name__ == "__main__":
     print(" * สามารถเปลี่ยนรหัสผ่านและบัญชีสยามชัย/ทรู ได้ที่เมนูตั้งค่า")
     print("=" * 65)
 
-    threading.Thread(target=open_browser, daemon=True).start()
+    if os.name == "nt" and not os.environ.get("RENDER"):
+        threading.Thread(target=open_browser, daemon=True).start()
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")

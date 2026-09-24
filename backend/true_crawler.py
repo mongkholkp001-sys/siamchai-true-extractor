@@ -60,6 +60,17 @@ class TrueCrawler:
             return self.last_screenshot_bytes
 
     def find_browser(self):
+        # 1. Linux candidates (Render, Docker, VPS)
+        if os.name != "nt":
+            for binary in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]:
+                p = shutil.which(binary)
+                if p:
+                    return "chrome", p
+            for p in ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser"]:
+                if os.path.exists(p):
+                    return "chrome", p
+
+        # 2. Windows candidates
         candidates = [
             ("chrome", r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
             ("chrome", r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
@@ -85,17 +96,18 @@ class TrueCrawler:
             self.profile_dir = tempfile.mkdtemp(prefix="true_hub_profile_")
 
         args = [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
             "--disable-notifications",
             "--disable-popup-blocking",
             "--no-first-run",
             "--no-default-browser-check",
-            "--disable-dev-shm-usage",
             "--remote-allow-origins=*",
             f"--user-data-dir={self.profile_dir}",
             "--window-size=1920,1080",
             "--disable-blink-features=AutomationControlled",
         ]
-        if self.headless:
+        if self.headless or os.name != "nt":
             args.extend(["--headless=new", "--disable-gpu"])
 
         options = webdriver.ChromeOptions()

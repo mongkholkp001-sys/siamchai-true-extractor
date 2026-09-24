@@ -1,0 +1,14 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+cloudflared.exe
+results/*.xlsx
+results/*.xls
+*.zip
+test_*.py
+test_*.txt
+test_*.png
+inspect_*.py
+inspect_*.png
