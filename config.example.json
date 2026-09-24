@@ -1,0 +1,12 @@
+{
+  "web_username": "admin",
+  "web_password": "password123",
+  "auth_secret_token": "change_me_to_random_secret_key_12345",
+  "siamchai_username": "YOUR_SIAMCHAI_USERNAME",
+  "siamchai_password": "YOUR_SIAMCHAI_PASSWORD",
+  "true_username": "YOUR_TRUE_USERNAME",
+  "true_password": "YOUR_TRUE_PASSWORD",
+  "headless": true,
+  "concurrency": true,
+  "default_mode": "both"
+}

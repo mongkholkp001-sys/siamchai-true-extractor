@@ -1,0 +1,31 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+env/
+venv/
+ENV/
+.venv/
+
+# Browser profiles and temp files
+*profile*/
+*.tmp
+*.log
+
+# Sensitive User Config (Passwords)
+data/config.json
+data/upload_*
+
+# Result Excels & Temporary Screenshots
+results/*.xlsx
+results/*.csv
+*.png
+!static/*.png
+
+# IDE & Operating System Files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
