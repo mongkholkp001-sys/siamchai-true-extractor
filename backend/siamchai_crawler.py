@@ -68,6 +68,10 @@ class SiamchaiCrawler:
     def find_browser(self):
         # 1. Linux candidates (Render, Docker, VPS)
         if os.name != "nt":
+            render_chrome = "/opt/render/project/.render/chrome/opt/google/chrome/google-chrome"
+            if os.path.exists(render_chrome):
+                return "chrome", render_chrome
+
             for binary in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]:
                 p = shutil.which(binary)
                 if p:

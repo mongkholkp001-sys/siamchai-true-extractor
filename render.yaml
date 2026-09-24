@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: siamchai-true-extractor
+    runtime: docker
+    plan: free
+    region: singapore
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 8000
