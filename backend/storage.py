@@ -19,13 +19,13 @@ DEFAULT_CONFIG = {
     "web_password": "password123",
     "auth_secret_token": "siamchai_true_secret_token_2026",
     
-    # Siamchai Credentials (configured via settings or config.json)
-    "siamchai_username": "",
-    "siamchai_password": "",
+    # Siamchai Credentials
+    "siamchai_username": "71481",
+    "siamchai_password": "71482",
     
-    # TrueCorp Credentials (configured via settings or config.json)
-    "true_username": "",
-    "true_password": "",
+    # TrueCorp Credentials
+    "true_username": "71114525",
+    "true_password": "Slumzick999",
     
     # Crawler Settings
     "headless": True,
@@ -34,17 +34,26 @@ DEFAULT_CONFIG = {
 }
 
 def load_config():
-    if not os.path.exists(CONFIG_FILE):
-        save_config(DEFAULT_CONFIG)
-        return DEFAULT_CONFIG.copy()
-    try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-            merged = DEFAULT_CONFIG.copy()
-            merged.update(cfg)
-            return merged
-    except Exception:
-        return DEFAULT_CONFIG.copy()
+    cfg = DEFAULT_CONFIG.copy()
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+                cfg.update(saved)
+        except Exception:
+            pass
+
+    # Read from environment variables if present (useful for Render / Docker / Cloud)
+    for k in [
+        "web_username", "web_password",
+        "siamchai_username", "siamchai_password",
+        "true_username", "true_password"
+    ]:
+        env_val = os.environ.get(k.upper()) or os.environ.get(k)
+        if env_val:
+            cfg[k] = env_val
+
+    return cfg
 
 def save_config(cfg):
     try:

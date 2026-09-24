@@ -119,7 +119,14 @@ class TrueCrawler:
             options.binary_location = browser_path
         for a in args:
             options.add_argument(a)
-        self.driver = webdriver.Chrome(options=options)
+
+        driver_path = shutil.which("chromedriver") or ("/usr/bin/chromedriver" if os.path.exists("/usr/bin/chromedriver") else None)
+        if driver_path:
+            from selenium.webdriver.chrome.service import Service
+            self.driver = webdriver.Chrome(service=Service(driver_path), options=options)
+        else:
+            self.driver = webdriver.Chrome(options=options)
+
         self.driver.set_page_load_timeout(45)
         self.driver.implicitly_wait(3)
 
