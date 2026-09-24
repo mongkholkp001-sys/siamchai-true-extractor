@@ -38,7 +38,10 @@ class TrueCrawler:
 
     def log(self, msg: str):
         if self.log_callback:
-            self.log_callback(msg)
+            try:
+                self.log_callback(msg)
+            except Exception:
+                pass
         else:
             try:
                 print(f"[True] {msg}")
@@ -100,17 +103,19 @@ class TrueCrawler:
             self.profile_dir = tempfile.mkdtemp(prefix="true_hub_profile_")
 
         args = [
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
             "--disable-notifications",
             "--disable-popup-blocking",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-dev-shm-usage",
             "--remote-allow-origins=*",
             f"--user-data-dir={self.profile_dir}",
             "--window-size=1920,1080",
             "--disable-blink-features=AutomationControlled",
         ]
+        if os.name != "nt":
+            args.extend(["--no-sandbox", "--disable-setuid-sandbox"])
+
         if self.headless or os.name != "nt":
             args.extend(["--headless=new", "--disable-gpu"])
 
@@ -234,142 +239,80 @@ class TrueCrawler:
         if not success:
             raise RuntimeError("ไม่สามารถเข้าสู่ระบบ TrueCorp ได้ กรุณาตรวจสอบ Username / Password หรือการเชื่อมต่อ")
 
-    def wait_for_verify_detail(self, timeout=18) -> bool:
+    def wait_for_verify_detail(self, timeout=8) -> bool:
         start_time = time.time()
         while time.time() - start_time < timeout:
             self.handle_popups_and_errors()
             if "verify-detail" in self.driver.current_url:
                 break
-            time.sleep(0.4)
+            time.sleep(0.3)
 
         if "verify-detail" not in self.driver.current_url:
             return False
 
-        load_start = time.time()
-        while time.time() - load_start < 10:
-            self.handle_popups_and_errors()
-            skeletons = self.driver.find_elements(By.CSS_SELECTOR, ".MuiSkeleton-root, [role='progressbar'], .loading")
-            loading = any(s.is_displayed() for s in skeletons)
+        # Fast check: wait until either back button, table, or down arrows appear
+        render_start = time.time()
+        while time.time() - render_start < 4:
+            has_back = len(self.driver.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ')]")) > 0
             has_tr = len(self.driver.find_elements(By.TAG_NAME, "tr")) > 1
             has_arrows = len(self.driver.find_elements(By.CSS_SELECTOR, 'svg[data-testid="KeyboardArrowDownRoundedIcon"]')) > 0
-            if not loading and (has_tr or has_arrows):
-                time.sleep(0.8)
+            if has_back or has_tr or has_arrows:
+                time.sleep(0.3)
                 return True
-            time.sleep(0.4)
+            time.sleep(0.3)
 
         return True
 
-    def click_all_down_arrows(self) -> int:
-        click_count = 0
-        max_clicks = 25
-
-        while click_count < max_clicks:
-            self.handle_popups_and_errors()
-            arrows = self.driver.find_elements(
-                By.CSS_SELECTOR,
-                'svg[data-testid="KeyboardArrowDownRoundedIcon"]:not([data-bot-clicked="true"])'
-            )
-            if not arrows:
-                break
-
-            clicked_any = False
-            for target in arrows:
+    def click_all_down_arrows(self):
+        arrows = self.driver.find_elements(By.CSS_SELECTOR, 'svg[data-testid="KeyboardArrowDownRoundedIcon"]')
+        for a in arrows:
+            try:
+                a.click()
+            except Exception:
                 try:
-                    self.driver.execute_script("arguments[0].setAttribute('data-bot-clicked', 'true');", target)
                     self.driver.execute_script("""
-                        const svg = arguments[0];
-                        const btn = svg.closest('button, [role="button"], td, div') || svg.parentElement;
-                        btn.click();
-                    """, target)
-                    clicked_any = True
-                    click_count += 1
-                    time.sleep(0.4)
-                    break # Re-query fresh elements after each click to handle nested arrows
+                        const el = arguments[0];
+                        const btn = el.closest('button, [role="button"], tr, td, div') || el.parentElement || el;
+                        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                    """, a)
                 except Exception:
-                    continue
-
-            if not clicked_any:
-                break
-
-        time.sleep(0.6)
-        return click_count
+                    pass
+            time.sleep(0.15)
 
     def extract_phone_numbers(self, current_cid: str = "") -> Tuple[List[str], List[str], Dict[str, str]]:
         active_phones = []
         all_phones = []
         phone_status = {}
 
-        # Regex for Thai mobile (06x, 08x, 09x) and landline numbers (02, 03x, etc.)
-        # Using negative lookbehind and lookahead to avoid matching substrings of 13-digit CIDs
-        phone_pattern = re.compile(r'(?<!\d)(0[689]\d{8}|0[689]\d{1}-\d{3}-\d{4}|0[2-7]\d{7,8}|0[2-7]\d{1}-\d{3}-\d{4})(?!\d)')
-
         # 1. Scan rows in tables
         rows = self.driver.find_elements(By.TAG_NAME, "tr")
         for r in rows:
-            text = r.text
+            text = r.text.strip()
             if not text:
                 continue
-            matches = phone_pattern.findall(text)
+
+            matches = re.findall(r'0\d{1,2}-?\d{3}-?\d{4}', text)
+            is_active_row = "Active" in text or "active" in text.lower() or "ใช้งาน" in text
+
             for ph in matches:
                 clean = ph.strip()
-                if clean == current_cid or clean.startswith("000"):
+                # Exclude if it's the CID itself or a substring of the CID
+                if clean == current_cid or clean in current_cid or clean.startswith("000"):
                     continue
                 if clean not in all_phones:
                     all_phones.append(clean)
 
-                is_active = ("active" in text.lower() or "ใช้งาน" in text) and not any(
-                    k in text.lower() for k in ["cancelled", "cancel", "ยกเลิก", "inactive", "suspended"]
-                )
-                if is_active:
+                if is_active_row:
                     phone_status[clean] = "Active"
                     if clean not in active_phones:
                         active_phones.append(clean)
-                elif "cancelled" in text.lower() or "cancel" in text.lower() or "ยกเลิก" in text:
-                    phone_status[clean] = "Cancelled"
+                elif "Cancelled" in text or "Cancel" in text or "ยกเลิก" in text:
+                    if clean not in phone_status:
+                        phone_status[clean] = "Cancelled"
                 elif clean not in phone_status:
                     phone_status[clean] = "พบในระบบ"
 
-        # 2. Scan entire page body text
-        try:
-            body_text = self.driver.find_element(By.TAG_NAME, "body").text
-            matches_body = phone_pattern.findall(body_text)
-            for ph in matches_body:
-                clean = ph.strip()
-                if clean == current_cid or clean.startswith("000"):
-                    continue
-                if clean not in all_phones:
-                    all_phones.append(clean)
-                    if clean not in phone_status:
-                        phone_status[clean] = "พบในระบบ"
-        except Exception:
-            pass
-
         return all_phones, active_phones, phone_status
-
-    def navigate_back_clean(self):
-        try:
-            self.handle_popups_and_errors()
-            if "login" in self.driver.current_url:
-                self.perform_login()
-                return
-
-            if "verify-detail" in self.driver.current_url:
-                back_btns = self.driver.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ') or contains(text(), 'กลับ')]")
-                if back_btns:
-                    self.driver.execute_script("arguments[0].click();", back_btns[0])
-                    time.sleep(1.2)
-                else:
-                    self.driver.get(TRUE_PREVERIFY_URL)
-                    time.sleep(1.5)
-            elif "pre-verify" not in self.driver.current_url:
-                self.driver.get(TRUE_PREVERIFY_URL)
-                time.sleep(1.5)
-        except Exception:
-            try:
-                self.driver.get(TRUE_PREVERIFY_URL)
-                time.sleep(1.5)
-            except Exception:
-                pass
 
     def search_one(self, cid: str) -> Dict[str, any]:
         cid_str = str(cid).strip()
@@ -378,66 +321,57 @@ class TrueCrawler:
 
         for attempt in range(1, 3):
             try:
-                self.navigate_back_clean()
+                # 1. หากยังอยู่ที่หน้าผลลัพธ์เดิม ให้กดปุ่มย้อนกลับทันที (เร็วมาก ไม่ต้องโหลดหน้าใหม่)
+                if "verify-detail" in self.driver.current_url:
+                    try:
+                        back_btns = self.driver.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ')]")
+                        if back_btns:
+                            try:
+                                back_btns[0].click()
+                            except Exception:
+                                self.driver.execute_script("arguments[0].click();", back_btns[0])
+                            time.sleep(0.4)
+                    except Exception:
+                        pass
+
+                # หากหลุดไปหน้า login หรือยังค้างในหน้าผลลัพธ์
+                if "login" in self.driver.current_url:
+                    self.perform_login()
+                elif "verify-detail" in self.driver.current_url or "pre-verify" not in self.driver.current_url:
+                    self.driver.get(TRUE_PREVERIFY_URL)
+                    time.sleep(0.8)
+
                 self.handle_popups_and_errors()
 
-                wait = WebDriverWait(self.driver, 12)
-                card_inp = wait.until(EC.presence_of_element_located((By.ID, "input_card_number")))
-                
-                # Reliable clear and typing
-                try:
-                    card_inp.click()
-                except Exception:
-                    self.driver.execute_script("arguments[0].click();", card_inp)
-                card_inp.send_keys(Keys.CONTROL, "a")
-                card_inp.send_keys(Keys.BACKSPACE)
-                time.sleep(0.1)
-                card_inp.send_keys(cid_str)
-                time.sleep(0.3)
+                # 2. รอช่องกรอกเลข
+                wait = WebDriverWait(self.driver, 8)
+                input_box = wait.until(EC.presence_of_element_located((By.ID, "input_card_number")))
+                input_box.clear()
+                input_box.send_keys(cid_str)
+                time.sleep(0.15)
 
-                # Ensure React state recognizes value change
-                self.driver.execute_script("""
-                    const input = arguments[0];
-                    const val = arguments[1];
-                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-                    if (setter) {
-                        setter.call(input, val);
-                    } else {
-                        input.value = val;
-                    }
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                """, card_inp, cid_str)
-                time.sleep(0.3)
-
+                # 3. กดปุ่ม ตรวจสอบ
                 submit_btn = self.driver.find_element(By.ID, "button_submit_step")
-                
-                # If disabled, re-click 'บุคคล' to trigger form validation
-                if submit_btn.get_attribute("disabled") is not None:
-                    for el in self.driver.find_elements(By.XPATH, "//*[contains(text(), 'บุคคล')]"):
-                        try:
-                            self.driver.execute_script("arguments[0].click();", el)
-                            time.sleep(0.3)
-                        except Exception:
-                            pass
-
-                # Submit search
                 try:
                     submit_btn.click()
                 except Exception:
                     self.driver.execute_script("arguments[0].click();", submit_btn)
 
-                # Wait for verify-detail page
-                ready = self.wait_for_verify_detail(timeout=14)
+                # 4. รอหน้าผลลัพธ์โหลด
+                WebDriverWait(self.driver, 10).until(
+                    lambda d: "verify-detail" in d.current_url or 
+                              len(d.find_elements(By.CSS_SELECTOR, 'svg[data-testid="KeyboardArrowDownRoundedIcon"]')) > 0 or
+                              len(d.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ')]")) > 0
+                )
+                time.sleep(0.4)
                 self.capture_screen()
-                if not ready:
-                    continue
 
-                # Expand all collapsed accordions/down arrows
+                # 5. คลิกลูกศรลงทั้งหมดเพื่อกางตารางเบอร์โทร
                 self.click_all_down_arrows()
+                time.sleep(0.4)
                 self.capture_screen()
 
-                # Extract phone numbers
+                # 6. กวาดหาเบอร์ Active และเบอร์ทั้งหมด
                 all_ph, active_ph, status_map = self.extract_phone_numbers(current_cid=cid_str)
 
                 count = len(active_ph)
@@ -445,7 +379,18 @@ class TrueCrawler:
                 all_str = ", ".join(all_ph) if all_ph else "-"
                 details_str = "; ".join([f"{k} ({v})" for k, v in status_map.items()]) if status_map else "-"
 
-                self.navigate_back_clean()
+                # 7. กดกลับสู่หน้าตรวจสอบทันทีสำหรับเลขถัดไป
+                try:
+                    back_btns = self.driver.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ')]")
+                    if back_btns:
+                        try:
+                            back_btns[0].click()
+                        except Exception:
+                            self.driver.execute_script("arguments[0].click();", back_btns[0])
+                        time.sleep(0.3)
+                except Exception:
+                    pass
+
                 return {
                     "cid": cid_str,
                     "status": "สำเร็จ" if count > 0 else ("ไม่พบเบอร์ Active" if all_ph else "ไม่พบข้อมูล"),
@@ -454,18 +399,11 @@ class TrueCrawler:
                     "all_phones": all_str,
                     "phone_details": details_str
                 }
+
             except Exception as e:
                 self.log(f"ข้อผิดพลาดทรู (รอบ {attempt}): {e}")
-                # If browser crashed, recreate driver
-                if "refused" in str(e).lower() or "session" in str(e).lower():
-                    try:
-                        self.log("กำลังเชื่อมต่อเบราว์เซอร์ TrueCorp ใหม่...")
-                        self.login_and_prepare()
-                    except Exception:
-                        pass
-                time.sleep(1)
+                time.sleep(0.5)
 
-        self.navigate_back_clean()
         return {
             "cid": cid_str,
             "status": "ไม่พบข้อมูล/ผิดพลาด",

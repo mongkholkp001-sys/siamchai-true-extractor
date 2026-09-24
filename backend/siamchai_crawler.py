@@ -99,17 +99,19 @@ class SiamchaiCrawler:
         self.profile_dir = tempfile.mkdtemp(prefix="siamchai_hub_profile_")
 
         args = [
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
             "--disable-notifications",
             "--disable-popup-blocking",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-dev-shm-usage",
             "--remote-allow-origins=*",
             f"--user-data-dir={self.profile_dir}",
             "--window-size=1920,1080",
             "--disable-blink-features=AutomationControlled",
         ]
+        if os.name != "nt":
+            args.extend(["--no-sandbox", "--disable-setuid-sandbox"])
+
         if self.headless or os.name != "nt":
             args.extend(["--headless=new", "--disable-gpu"])
 
