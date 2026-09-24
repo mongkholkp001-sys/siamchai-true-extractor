@@ -339,16 +339,18 @@ class SiamchaiCrawler:
             self.js_click(inp)
         inp.send_keys(Keys.CONTROL, "a")
         inp.send_keys(Keys.BACKSPACE)
-        time.sleep(0.08)
+        time.sleep(0.1)
         inp.send_keys(str(cid))
+        time.sleep(0.1)
+        inp.send_keys(Keys.ENTER)
         inp.send_keys(Keys.TAB)
         try:
-            self.driver.execute_script("arguments[0].blur();", inp)
+            self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles:true})); arguments[0].blur();", inp)
         except Exception:
             pass
-        time.sleep(0.3)
+        time.sleep(0.8)
 
-    def wait_search_result(self, timeout=7):
+    def wait_search_result(self, timeout=8):
         end = time.time() + timeout
         self.last_draft_info = ("", "")
         while time.time() < end:
@@ -369,24 +371,24 @@ class SiamchaiCrawler:
 
             self.close_dialog_if_open()
 
-            # Check not found
-            try:
-                nf = self.driver.find_elements(By.XPATH, '//*[contains(text(),"ไม่พบข้อมูล") or contains(text(),"No data found") or contains(text(),"ไม่พบ")]')
-                if any(n.is_displayed() for n in nf):
-                    return "NOT_FOUND"
-            except Exception:
-                pass
-
-            # Check table rows
+            # Check table rows (Real rows found)
             try:
                 rows = self.driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
-                real_rows = [r for r in rows if r.text.strip()]
+                real_rows = [r for r in rows if r.text.strip() and "ไม่พบข้อมูล" not in r.text and "No data" not in r.text]
                 if real_rows:
                     return "FOUND"
             except Exception:
                 pass
 
-            time.sleep(0.2)
+            # Check not found
+            try:
+                nf = self.driver.find_elements(By.XPATH, '//*[contains(text(),"ไม่พบข้อมูล") or contains(text(),"No data found") or contains(text(),"ไม่พบรายการ")]')
+                if any(n.is_displayed() for n in nf):
+                    return "NOT_FOUND"
+            except Exception:
+                pass
+
+            time.sleep(0.3)
 
         if self.last_draft_info[1]:
             return "DRAFT"

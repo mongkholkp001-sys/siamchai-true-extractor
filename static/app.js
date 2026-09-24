@@ -440,7 +440,8 @@ function updateUI(data) {
   scProgressPercent.textContent = `${data.sc_percent || 0}%`;
   scProgressBar.style.width = `${data.sc_percent || 0}%`;
   scCurrCid.textContent = `กำลังค้นหา: ${data.sc_current_cid || '-'}`;
-  scCountFound.textContent = `พบข้อมูล: ${data.sc_count || 0} รายการ`;
+  const scFound = data.sc_found_count !== undefined ? data.sc_found_count : (data.sc_count || 0);
+  scCountFound.textContent = `พบข้อมูลสัญญา: ${scFound} รายการ (ค้นแล้ว ${data.sc_count || 0})`;
 
   if (data.has_sc_excel) {
     btnDownloadSc.classList.remove('hidden');
@@ -455,7 +456,8 @@ function updateUI(data) {
   trProgressPercent.textContent = `${data.tr_percent || 0}%`;
   trProgressBar.style.width = `${data.tr_percent || 0}%`;
   trCurrCid.textContent = `กำลังค้นหา: ${data.tr_current_cid || '-'}`;
-  trCountFound.textContent = `พบข้อมูล: ${data.tr_count || 0} รายการ`;
+  const trFound = data.tr_found_count !== undefined ? data.tr_found_count : (data.tr_count || 0);
+  trCountFound.textContent = `พบเบอร์ Active: ${trFound} รายการ (ค้นแล้ว ${data.tr_count || 0})`;
 
   if (data.has_tr_excel) {
     btnDownloadTr.classList.remove('hidden');

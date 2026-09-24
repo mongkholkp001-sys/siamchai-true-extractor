@@ -78,6 +78,15 @@ class UnifiedJobState:
                 end = self.end_time or time.time()
                 elapsed = int(end - self.start_time)
 
+            sc_found = sum(
+                1 for r in self.sc_results.values()
+                if r and r.get("สถานะ") not in ["ไม่พบข้อมูล", "Error", None] and r.get("ชื่อ-นามสกุล") not in ["-", "", None]
+            )
+            tr_found = sum(
+                1 for r in self.tr_results.values()
+                if r and (r.get("active_count", 0) > 0 or r.get("status") in ["สำเร็จ", "พบเบอร์ Active"])
+            )
+
             return {
                 "job_id": self.job_id,
                 "job_name": self.job_name,
@@ -92,6 +101,7 @@ class UnifiedJobState:
                 "sc_percent": sc_pct,
                 "sc_current_cid": self.sc_current_cid,
                 "sc_count": len(self.sc_results),
+                "sc_found_count": sc_found,
                 "has_sc_excel": bool(self.sc_excel_path and os.path.exists(self.sc_excel_path)),
                 "sc_excel_filename": os.path.basename(self.sc_excel_path) if self.sc_excel_path else None,
                 "sc_error": self.sc_error,
@@ -102,6 +112,7 @@ class UnifiedJobState:
                 "tr_percent": tr_pct,
                 "tr_current_cid": self.tr_current_cid,
                 "tr_count": len(self.tr_results),
+                "tr_found_count": tr_found,
                 "has_tr_excel": bool(self.tr_excel_path and os.path.exists(self.tr_excel_path)),
                 "tr_excel_filename": os.path.basename(self.tr_excel_path) if self.tr_excel_path else None,
                 "tr_error": self.tr_error,
