@@ -42,12 +42,8 @@ const trCurrCid = document.getElementById('tr-curr-cid');
 const trCountFound = document.getElementById('tr-count-found');
 const btnDownloadTr = document.getElementById('btn-download-tr');
 
-// Live View & Terminal
-const liveImg = document.getElementById('live-img');
-const liveOverlay = document.getElementById('live-overlay');
+// Terminal Log Element
 const terminalLogs = document.getElementById('terminal-logs');
-const tabScreenSc = document.getElementById('tab-screen-sc');
-const tabScreenTr = document.getElementById('tab-screen-tr');
 
 // Table Elements
 const tableHead = document.getElementById('table-head');
@@ -60,52 +56,78 @@ const tabTableTr = document.getElementById('tab-table-tr');
 // Checkboxes
 const checkSiamchai = document.getElementById('check-siamchai');
 const checkTrue = document.getElementById('check-true');
-const checkHeadless = document.getElementById('check-headless');
+
+// Direct Textarea
+const manualCids = document.getElementById('manual-cids');
+if (manualCids) {
+  manualCids.addEventListener('input', () => {
+    const lines = manualCids.value.split('\n').map(l => l.replace(/\D/g, '').trim()).filter(l => l.length >= 10);
+    currentCids = lines;
+    if (cidBadge) {
+      cidBadge.textContent = `${lines.length} รายการ`;
+      cidBadge.className = lines.length > 0
+        ? 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30'
+        : 'px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700';
+    }
+  });
+}
 
 // ------------------ File Upload & Parsing ------------------
-dropZone.addEventListener('click', () => fileInput.click());
+if (dropZone) dropZone.addEventListener('click', () => fileInput.click());
 
-dropZone.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  dropZone.classList.add('border-sky-500', 'bg-sky-500/10');
-});
+if (dropZone) {
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('border-sky-500', 'bg-sky-500/10');
+  });
 
-dropZone.addEventListener('dragleave', () => {
-  dropZone.classList.remove('border-sky-500', 'bg-sky-500/10');
-});
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('border-sky-500', 'bg-sky-500/10');
+  });
 
-dropZone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  dropZone.classList.remove('border-sky-500', 'bg-sky-500/10');
-  if (e.dataTransfer.files.length) {
-    handleFileUpload(e.dataTransfer.files[0]);
-  }
-});
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('border-sky-500', 'bg-sky-500/10');
+    if (e.dataTransfer.files.length) {
+      handleFileUpload(e.dataTransfer.files[0]);
+    }
+  });
+}
 
-fileInput.addEventListener('change', (e) => {
-  if (e.target.files.length) {
-    handleFileUpload(e.target.files[0]);
-  }
-});
+if (fileInput) {
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length) {
+      handleFileUpload(e.target.files[0]);
+    }
+  });
+}
 
 async function handleFileUpload(file) {
   const formData = new FormData();
   formData.append('file', file);
 
-  dropZone.querySelector('p').textContent = 'กำลังอ่านไฟล์: ' + file.name + '...';
+  const statusLabel = dropZone.querySelector('p');
+  if (statusLabel) statusLabel.textContent = 'กำลังอ่านไฟล์: ' + file.name + '...';
 
   try {
+    const headers = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
     const res = await fetch('/api/upload_excel', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${authToken}` },
+      headers: headers,
+      credentials: 'same-origin',
       body: formData
     });
     const data = await res.json();
     if (res.ok && data.status === 'ok') {
       currentCids = data.cids;
-      cidBadge.textContent = `${data.count} รายการ`;
-      cidBadge.classList.remove('hidden');
-      dropZone.querySelector('p').textContent = `✅ โหลดแล้ว: ${file.name} (${data.count} รายการ)`;
+      if (manualCids) manualCids.value = data.cids.join('\n');
+      if (cidBadge) {
+        cidBadge.textContent = `${data.count} รายการ`;
+        cidBadge.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30';
+      }
+      if (statusLabel) statusLabel.textContent = `✅ โหลดแล้ว: ${file.name} (${data.count} รายการ)`;
       addLog(`📁 โหลดไฟล์สำเร็จ: ${file.name} (${data.count} รายการ)`);
     } else {
       alert(data.detail || 'เกิดข้อผิดพลาดในการอ่านไฟล์');
@@ -114,27 +136,6 @@ async function handleFileUpload(file) {
     alert('เกิดข้อผิดพลาด: ' + err.message);
   }
 }
-
-// Manual Input
-const toggleManual = document.getElementById('toggle-manual');
-const manualBox = document.getElementById('manual-box');
-const manualCids = document.getElementById('manual-cids');
-const btnApplyManual = document.getElementById('btn-apply-manual');
-
-toggleManual.addEventListener('click', () => manualBox.classList.toggle('hidden'));
-btnApplyManual.addEventListener('click', () => {
-  const lines = manualCids.value.split('\n').map(l => l.replace(/\D/g, '').trim()).filter(l => l.length >= 10);
-  if (lines.length) {
-    currentCids = lines;
-    cidBadge.textContent = `${lines.length} รายการ`;
-    cidBadge.classList.remove('hidden');
-    dropZone.querySelector('p').textContent = `✅ ระบุเลขด้วยตนเอง: ${lines.length} รายการ`;
-    addLog(`✍️ นำเข้าเลขค้นหาด้วยตนเอง: ${lines.length} รายการ`);
-    manualBox.classList.add('hidden');
-  } else {
-    alert('กรุณาระบุเลขค้นหาอย่างน้อย 1 รายการ');
-  }
-});
 
 // ------------------ Actions: Start / Stop ------------------
 btnStart.addEventListener('click', async () => {
@@ -217,27 +218,6 @@ btnStop.addEventListener('click', async () => {
     console.error(err);
   }
 });
-
-// ------------------ Dual Screen Switcher ------------------
-tabScreenSc.addEventListener('click', () => {
-  activeScreenTab = 'siamchai';
-  tabScreenSc.className = 'px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-500 text-white shadow transition-all';
-  tabScreenTr.className = 'px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 text-slate-400 hover:text-white transition-all';
-  refreshLiveScreenshot();
-});
-
-tabScreenTr.addEventListener('click', () => {
-  activeScreenTab = 'true';
-  tabScreenTr.className = 'px-3 py-1 rounded-lg text-xs font-semibold bg-rose-500 text-white shadow transition-all';
-  tabScreenSc.className = 'px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 text-slate-400 hover:text-white transition-all';
-  refreshLiveScreenshot();
-});
-
-function refreshLiveScreenshot() {
-  if (!isJobRunning) return;
-  const endpoint = activeScreenTab === 'siamchai' ? '/api/screenshot/siamchai' : '/api/screenshot/true';
-  liveImg.src = `${endpoint}?t=${Date.now()}`;
-}
 
 // ------------------ Table View Tabs ------------------
 tabTableSum.addEventListener('click', () => switchTableTab('summary'));
@@ -467,19 +447,12 @@ function updateUI(data) {
 
   if (isJobRunning) {
     btnStart.disabled = true;
+    btnStart.innerHTML = `<span class="inline-block animate-spin mr-1">⏳</span><span>กำลังค้นหาข้อมูล...</span>`;
     btnStop.disabled = false;
-    liveOverlay.classList.add('hidden');
-    if (!screenInterval) {
-      screenInterval = setInterval(refreshLiveScreenshot, 1000);
-    }
   } else {
     btnStart.disabled = false;
+    btnStart.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><span>เริ่มค้นหาข้อมูลทันที (แยกค้นอิสระ)</span>`;
     btnStop.disabled = true;
-    liveOverlay.classList.remove('hidden');
-    if (screenInterval) {
-      clearInterval(screenInterval);
-      screenInterval = null;
-    }
   }
 
   // 1. Siamchai Card Update

@@ -83,43 +83,35 @@
   <!-- Main Container -->
   <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
 
-    <!-- Top Card: File Upload & Control Panel -->
+    <!-- Top Card: Input & Control Panel -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-      <!-- Left 7 cols: Upload and Input -->
+      <!-- Left 7 cols: Direct Input and File Upload -->
       <div class="lg:col-span-7 glass-panel rounded-2xl p-5 space-y-4">
         <div class="flex items-center justify-between">
           <h2 class="text-sm font-semibold text-white flex items-center gap-2">
             <span class="w-6 h-6 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center text-xs font-bold">1</span>
-            อัปโหลดไฟล์ Excel หรือระบุเลขค้นหา
+            ระบุเลขค้นหา (พิมพ์/วาง หรือ อัปโหลด Excel)
           </h2>
-          <span id="cid-count-badge" class="hidden px-2.5 py-0.5 rounded-full text-xs font-medium bg-sky-500/20 text-sky-300 border border-sky-500/30">
+          <span id="cid-count-badge" class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
             0 รายการ
           </span>
         </div>
 
-        <!-- Drag & Drop Area -->
-        <div id="drop-zone" class="border-2 border-dashed border-slate-700 hover:border-sky-500/60 rounded-xl p-5 text-center cursor-pointer transition-colors bg-slate-900/40">
-          <input type="file" id="file-input" accept=".xlsx, .xls, .csv" class="hidden">
-          <div class="flex flex-col items-center justify-center space-y-2">
-            <div class="w-12 h-12 rounded-xl bg-slate-800 text-sky-400 flex items-center justify-center shadow-inner">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-            </div>
-            <p class="text-xs text-slate-300 font-medium">ลากไฟล์ Excel (.xlsx, .csv) มาวางที่นี่ หรือ <span class="text-sky-400 underline">คลิกเพื่อเลือกไฟล์</span></p>
-            <p class="text-[11px] text-slate-500">ระบบจะอ่านเลขค้นหาจากคอลัมน์แรกโดยอัตโนมัติ</p>
-          </div>
+        <!-- Direct Textarea for immediate copy-pasting -->
+        <div>
+          <label class="block text-xs font-medium text-slate-300 mb-1.5 flex items-center justify-between">
+            <span>วางเลขบัตรประชาชน 13 หลักที่นี่ (บรรทัดละ 1 เลข):</span>
+            <span class="text-[11px] text-slate-500">ระบบคัดกรองเฉพาะตัวเลขให้อัตโนมัติ</span>
+          </label>
+          <textarea id="manual-cids" rows="4" placeholder="ตัวอย่าง:&#10;1770400019100&#10;3140200384485&#10;3302100242514" class="w-full bg-slate-950 border border-slate-700/80 hover:border-sky-500/50 rounded-xl p-3 text-xs text-white placeholder-slate-600 font-mono focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all"></textarea>
         </div>
 
-        <!-- Textarea Toggle for Manual Input -->
-        <div class="pt-1">
-          <button id="toggle-manual" class="text-xs text-slate-400 hover:text-sky-400 transition-colors flex items-center gap-1.5">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-            <span>หรือวางเลขบัตรประชาชนด้วยตนเอง (Manual Input)</span>
-          </button>
-          <div id="manual-box" class="hidden mt-2">
-            <textarea id="manual-cids" rows="3" placeholder="ระบุเลขบัตรประชาชน 13 หลัก (บรรทัดละ 1 เลข)" class="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white placeholder-slate-500 font-mono focus:outline-none focus:ring-1 focus:ring-sky-500"></textarea>
-            <button id="btn-apply-manual" class="mt-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-sky-400 font-medium">นำเข้าข้อมูลที่พิมพ์</button>
-          </div>
+        <!-- Or Drag & Drop Excel File -->
+        <div id="drop-zone" class="border-2 border-dashed border-slate-700/80 hover:border-sky-500/60 rounded-xl p-3.5 text-center cursor-pointer transition-colors bg-slate-900/40 flex items-center justify-center gap-3">
+          <input type="file" id="file-input" accept=".xlsx, .xls, .csv" class="hidden">
+          <svg class="w-5 h-5 text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+          <p class="text-xs text-slate-300 font-medium">หรือ <span class="text-sky-400 underline">คลิกอัปโหลดไฟล์ Excel / CSV</span> (อ่านคอลัมน์แรกอัตโนมัติ)</p>
         </div>
       </div>
 
@@ -153,20 +145,15 @@
               </div>
               <span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
             </label>
-
-            <label class="flex items-center gap-2 text-xs text-slate-400 px-1 pt-1 cursor-pointer">
-              <input type="checkbox" id="check-headless" checked class="rounded bg-slate-900 border-slate-700 text-sky-500 focus:ring-sky-500">
-              <span>โหมดเบื้องหลัง (Headless - ไม่เปิดหน้าต่างเบราว์เซอร์รกหน้าจอ)</span>
-            </label>
           </div>
         </div>
 
         <!-- Action Buttons -->
         <div class="space-y-2 pt-3 border-t border-slate-800/80">
           <div class="flex items-center gap-2">
-            <button id="btn-start" class="flex-1 py-3 px-4 rounded-xl font-medium text-sm text-white bg-gradient-to-r from-sky-500 via-indigo-600 to-rose-600 hover:from-sky-400 hover:to-rose-500 shadow-lg shadow-indigo-500/25 transition-all flex items-center justify-center gap-2">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-              <span>เริ่มค้นหา (แยกค้นอิสระ ไม่ต้องรอกัน)</span>
+            <button id="btn-start" class="flex-1 py-3 px-4 rounded-xl font-bold text-sm text-white bg-gradient-to-r from-sky-500 via-indigo-600 to-rose-600 hover:from-sky-400 hover:to-rose-500 shadow-lg shadow-indigo-500/25 transition-all flex items-center justify-center gap-2">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              <span>เริ่มค้นหาข้อมูลทันที (แยกค้นอิสระ)</span>
             </button>
             <button id="btn-stop" disabled class="py-3 px-4 rounded-xl font-medium text-sm text-slate-400 bg-slate-800 hover:bg-rose-500/20 hover:text-rose-400 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-700/60 transition-colors flex items-center gap-1.5">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" /></svg>
@@ -259,47 +246,17 @@
 
     </div>
 
-
-    <!-- Dual Live View & Terminal -->
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-
-      <!-- Live Browser View (6 cols) -->
-      <div class="lg:col-span-6 glass-panel rounded-2xl p-4 space-y-3 flex flex-col">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <button id="tab-screen-sc" class="px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-500 text-white shadow transition-all">
-              🟣 จอสยามชัย
-            </button>
-            <button id="tab-screen-tr" class="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 text-slate-400 hover:text-white transition-all">
-              🔴 จอทรู
-            </button>
-          </div>
-          <span class="text-[10px] text-slate-400 flex items-center gap-1 font-mono">
-            <span class="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping"></span>
-            LIVE VIEW
-          </span>
-        </div>
-
-        <div class="relative bg-slate-950 rounded-xl overflow-hidden border border-slate-800 aspect-video flex items-center justify-center">
-          <img id="live-img" src="/static/placeholder_siamchai.png" alt="Live View" class="w-full h-full object-contain">
-          <div id="live-overlay" class="absolute inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center text-xs text-slate-400">
-            <span>รอเริ่มการทำงานเพื่อแสดงภาพสด...</span>
-          </div>
-        </div>
+    <!-- Full-Width System Log Terminal (No Lag, Pure Performance) -->
+    <div class="glass-panel rounded-2xl p-4 space-y-2 flex flex-col">
+      <div class="flex items-center justify-between border-b border-slate-800/80 pb-2">
+        <span class="text-xs font-semibold text-slate-300 flex items-center gap-2">
+          <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+          System Log Terminal (รายงานขั้นตอนการทำงานแบบ Real-time)
+        </span>
+        <button id="btn-clear-logs" class="text-[11px] text-slate-500 hover:text-slate-300">ล้างข้อความ</button>
       </div>
-
-      <!-- System Log Terminal (6 cols) -->
-      <div class="lg:col-span-6 glass-panel rounded-2xl p-4 space-y-2 flex flex-col">
-        <div class="flex items-center justify-between border-b border-slate-800/80 pb-2">
-          <span class="text-xs font-semibold text-slate-300 flex items-center gap-2">
-            <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-            System Log Terminal
-          </span>
-          <button id="btn-clear-logs" class="text-[11px] text-slate-500 hover:text-slate-300">ล้างข้อความ</button>
-        </div>
-        <div id="terminal-logs" class="flex-1 bg-slate-950 rounded-xl p-3 font-mono text-xs text-slate-300 space-y-1.5 overflow-y-auto max-h-[260px] scrollbar-thin">
-          <div class="text-slate-500">// ระบบพร้อมทำงาน...</div>
-        </div>
+      <div id="terminal-logs" class="bg-slate-950 rounded-xl p-3 font-mono text-xs text-slate-300 space-y-1.5 overflow-y-auto max-h-[220px] scrollbar-thin">
+        <div class="text-slate-500">// ระบบพร้อมทำงาน...</div>
       </div>
     </div>
 
@@ -403,6 +360,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20260924_fast"></script>
 </body>
 </html>

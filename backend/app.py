@@ -157,27 +157,6 @@ async def stop_crawl(user: str = Depends(get_current_user)):
     unified_job.add_log("🛑 ได้รับคำสั่งหยุดการทำงานจากผู้ใช้...")
     return {"status": "stopping"}
 
-# ------------------ Dual Screenshot Streaming ------------------
-@app.get("/api/screenshot/siamchai")
-async def get_siamchai_screen():
-    crawler = unified_job.siamchai_crawler
-    if crawler:
-        img_bytes = crawler.get_screenshot_bytes()
-        if img_bytes:
-            return Response(content=img_bytes, media_type="image/png")
-    # Return placeholder
-    return FileResponse(os.path.join(STATIC_DIR, "placeholder_siamchai.png")) if os.path.exists(os.path.join(STATIC_DIR, "placeholder_siamchai.png")) else Response(status_code=204)
-
-@app.get("/api/screenshot/true")
-async def get_true_screen():
-    crawler = unified_job.true_crawler
-    if crawler:
-        img_bytes = crawler.get_screenshot_bytes()
-        if img_bytes:
-            return Response(content=img_bytes, media_type="image/png")
-    # Return placeholder
-    return FileResponse(os.path.join(STATIC_DIR, "placeholder_true.png")) if os.path.exists(os.path.join(STATIC_DIR, "placeholder_true.png")) else Response(status_code=204)
-
 # ------------------ Upload & Download ------------------
 @app.post("/api/upload_excel")
 async def upload_excel(file: UploadFile = File(...), user: str = Depends(get_current_user)):
