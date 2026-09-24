@@ -1,26 +1,17 @@
 FROM python:3.11-slim
 
-# Install system dependencies and Official Google Chrome
+# Install dependencies and Official Google Chrome (Compatible with Debian 12 Bookworm)
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
-    unzip \
     gnupg \
     ca-certificates \
-    libnss3 \
-    libgconf-2-4 \
-    libfontconfig1 \
-    libxss1 \
-    libasound2 \
-    libatk1.0-0 \
-    libgtk-3-0 \
     fonts-liberation \
     fonts-thai-tlwg \
     --no-install-recommends \
-    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/googlechrome-linux-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable --no-install-recommends \
+    && wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get install -y --no-install-recommends ./google-chrome-stable_current_amd64.deb \
+    && rm -f google-chrome-stable_current_amd64.deb \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
