@@ -1,4 +1,4 @@
-// Customer Data Hub - Unified Extractor Frontend Script
+// Customer Data Hub - Unified Extractor Frontend Script (Independent Crawlers)
 
 let currentCids = [];
 let currentResults = [];
@@ -8,36 +8,51 @@ let isJobRunning = false;
 let screenInterval = null;
 
 // Auth Check
-const authToken = localStorage.getItem('auth_token');
+const authToken = localStorage.getItem('auth_token') || '';
 const authUser = localStorage.getItem('auth_user') || 'admin';
 if (document.getElementById('user-display')) {
   document.getElementById('user-display').textContent = authUser;
 }
 
-// Elements
+// Elements - Inputs & Controls
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const cidBadge = document.getElementById('cid-count-badge');
 const btnStart = document.getElementById('btn-start');
 const btnStop = document.getElementById('btn-stop');
-const btnDownload = document.getElementById('btn-download');
-const progressBar = document.getElementById('progress-bar');
-const progressInfo = document.getElementById('progress-info');
-const statusPill = document.getElementById('status-pill');
-const currCidDisplay = document.getElementById('curr-cid-display');
-const timerDisplay = document.getElementById('timer-display');
+
+// Combined Download Button
+const btnDownloadCombined = document.getElementById('btn-download-combined');
+
+// Siamchai Card Elements
+const scStatusPill = document.getElementById('sc-status-pill');
+const scProgressInfo = document.getElementById('sc-progress-info');
+const scProgressPercent = document.getElementById('sc-progress-percent');
+const scProgressBar = document.getElementById('sc-progress-bar');
+const scCurrCid = document.getElementById('sc-curr-cid');
+const scCountFound = document.getElementById('sc-count-found');
+const btnDownloadSc = document.getElementById('btn-download-sc');
+
+// TrueCorp Card Elements
+const trStatusPill = document.getElementById('tr-status-pill');
+const trProgressInfo = document.getElementById('tr-progress-info');
+const trProgressPercent = document.getElementById('tr-progress-percent');
+const trProgressBar = document.getElementById('tr-progress-bar');
+const trCurrCid = document.getElementById('tr-curr-cid');
+const trCountFound = document.getElementById('tr-count-found');
+const btnDownloadTr = document.getElementById('btn-download-tr');
+
+// Live View & Terminal
 const liveImg = document.getElementById('live-img');
 const liveOverlay = document.getElementById('live-overlay');
 const terminalLogs = document.getElementById('terminal-logs');
-const tableHead = document.getElementById('table-head');
-const tableBody = document.getElementById('table-body');
-const tableCount = document.getElementById('table-count');
-
-// Dual Screen Tabs
 const tabScreenSc = document.getElementById('tab-screen-sc');
 const tabScreenTr = document.getElementById('tab-screen-tr');
 
-// Table Tabs
+// Table Elements
+const tableHead = document.getElementById('table-head');
+const tableBody = document.getElementById('table-body');
+const tableCount = document.getElementById('table-count');
 const tabTableSum = document.getElementById('tab-table-sum');
 const tabTableSc = document.getElementById('tab-table-sc');
 const tabTableTr = document.getElementById('tab-table-tr');
@@ -114,10 +129,10 @@ btnApplyManual.addEventListener('click', () => {
     cidBadge.textContent = `${lines.length} รายการ`;
     cidBadge.classList.remove('hidden');
     dropZone.querySelector('p').textContent = `✅ ระบุเลขด้วยตนเอง: ${lines.length} รายการ`;
-    addLog(`✍️ นำเข้าเลขบัตรด้วยตนเอง: ${lines.length} รายการ`);
+    addLog(`✍️ นำเข้าเลขค้นหาด้วยตนเอง: ${lines.length} รายการ`);
     manualBox.classList.add('hidden');
   } else {
-    alert('กรุณาระบุเลขบัตรประชาชนอย่างน้อย 1 รายการ');
+    alert('กรุณาระบุเลขค้นหาอย่างน้อย 1 รายการ');
   }
 });
 
@@ -141,7 +156,9 @@ btnStart.addEventListener('click', async () => {
 
   btnStart.disabled = true;
   btnStop.disabled = false;
-  btnDownload.classList.add('hidden');
+  btnDownloadCombined.classList.add('hidden');
+  btnDownloadSc.classList.add('hidden');
+  btnDownloadTr.classList.add('hidden');
 
   try {
     const res = await fetch('/api/start', {
@@ -153,7 +170,7 @@ btnStart.addEventListener('click', async () => {
       body: JSON.stringify({
         cids: currentCids,
         mode: mode,
-        job_name: 'unified_search',
+        job_name: 'search_job',
         headless: checkHeadless.checked
       })
     });
@@ -255,7 +272,9 @@ function renderTable() {
       const name = sc['ชื่อ-นามสกุล'] || tr.name || '-';
       const scStatus = sc['สถานะ'] || '-';
       const scPhone = sc['เบอร์โทรผู้เช่าซื้อ'] || '-';
-      const trActive = tr.active_count > 0 ? `<span class="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">${tr.active_phones}</span>` : '<span class="text-slate-500">-</span>';
+      const trActive = tr.active_count > 0 
+        ? `<span class="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">${tr.active_phones}</span>` 
+        : '<span class="text-slate-500">-</span>';
       const coName = sc['ชื่อ-นามสกุลผู้ค้ำ'] ? `${sc['ชื่อ-นามสกุลผู้ค้ำ']} (${sc['เบอร์โทรผู้ค้ำ'] || '-'})` : '-';
       const addr = sc['ที่อยู่ปัจจุบันผู้เช่าซื้อ'] || '-';
 
@@ -335,9 +354,11 @@ function renderTable() {
 function addLog(msg) {
   const div = document.createElement('div');
   div.textContent = msg;
-  if (msg.includes('สำเร็จ')) div.className = 'text-emerald-400';
+  if (msg.includes('🟣 [สยามชัย]')) div.className = 'text-indigo-300';
+  else if (msg.includes('🔴 [ทรู]')) div.className = 'text-rose-300';
+  else if (msg.includes('สำเร็จ') || msg.includes('🎉') || msg.includes('💾')) div.className = 'text-emerald-400 font-medium';
   else if (msg.includes('❌') || msg.includes('ข้อผิดพลาด')) div.className = 'text-rose-400';
-  else if (msg.includes('🚀') || msg.includes('✨')) div.className = 'text-sky-300 font-semibold';
+  else if (msg.includes('🚀') || msg.includes('⚡')) div.className = 'text-sky-300 font-semibold';
   terminalLogs.appendChild(div);
   terminalLogs.scrollTop = terminalLogs.scrollHeight;
 }
@@ -358,8 +379,12 @@ function connectWebSocket() {
   };
 
   ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    updateUI(data);
+    try {
+      const data = JSON.parse(event.data);
+      updateUI(data);
+    } catch (e) {
+      console.error("WS error:", e);
+    }
   };
 
   ws.onclose = () => {
@@ -369,13 +394,30 @@ function connectWebSocket() {
   };
 }
 
-function updateUI(data) {
-  isJobRunning = data.status === 'running';
+function updateStatusBadge(el, status) {
+  if (!el) return;
+  if (status === 'running') {
+    el.textContent = 'กำลังค้นหา (RUNNING)';
+    el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-sky-500/15 text-sky-400 border border-sky-500/30 animate-pulse';
+  } else if (status === 'done') {
+    el.textContent = 'เสร็จสิ้น (DONE)';
+    el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
+  } else if (status === 'error') {
+    el.textContent = 'ข้อผิดพลาด';
+    el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-rose-500/15 text-rose-400 border border-rose-500/30';
+  } else if (status === 'stopped') {
+    el.textContent = 'หยุดทำงาน';
+    el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30';
+  } else {
+    el.textContent = 'ว่าง (IDLE)';
+    el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700';
+  }
+}
 
-  // Status pill
-  if (data.status === 'running') {
-    statusPill.textContent = 'สถานะ: กำลังค้นหาข้อมูล (RUNNING)';
-    statusPill.className = 'px-2.5 py-1 rounded-full font-medium bg-sky-500/10 text-sky-400 border border-sky-500/30 animate-pulse';
+function updateUI(data) {
+  isJobRunning = (data.status === 'running');
+
+  if (isJobRunning) {
     btnStart.disabled = true;
     btnStop.disabled = false;
     liveOverlay.classList.add('hidden');
@@ -383,8 +425,6 @@ function updateUI(data) {
       screenInterval = setInterval(refreshLiveScreenshot, 1000);
     }
   } else {
-    statusPill.textContent = data.status === 'done' ? 'สถานะ: เสร็จสิ้น (DONE)' : (data.status === 'error' ? 'สถานะ: เกิดข้อผิดพลาด' : 'สถานะ: ว่าง (IDLE)');
-    statusPill.className = data.status === 'done' ? 'px-2.5 py-1 rounded-full font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'px-2.5 py-1 rounded-full font-medium bg-slate-800 text-slate-400 border border-slate-700';
     btnStart.disabled = false;
     btnStop.disabled = true;
     liveOverlay.classList.remove('hidden');
@@ -394,26 +434,48 @@ function updateUI(data) {
     }
   }
 
-  // Progress
-  progressBar.style.width = `${data.percent || 0}%`;
-  progressInfo.textContent = `${data.current_index || 0} / ${data.total || 0} รายการ (${data.percent || 0}%)`;
-  currCidDisplay.textContent = `กำลังทำ: ${data.current_cid || '-'}`;
+  // 1. Siamchai Card Update
+  updateStatusBadge(scStatusPill, data.sc_status);
+  scProgressInfo.textContent = `${data.sc_current_index || 0} / ${data.total || 0} รายการ`;
+  scProgressPercent.textContent = `${data.sc_percent || 0}%`;
+  scProgressBar.style.width = `${data.sc_percent || 0}%`;
+  scCurrCid.textContent = `กำลังค้นหา: ${data.sc_current_cid || '-'}`;
+  scCountFound.textContent = `พบข้อมูล: ${data.sc_count || 0} รายการ`;
 
-  const secs = data.elapsed_seconds || 0;
-  const m = String(Math.floor(secs / 60)).padStart(2, '0');
-  const s = String(secs % 60).padStart(2, '0');
-  timerDisplay.textContent = `⏱️ เวลา: ${m}:${s}`;
-
-  // Results
-  if (data.recent_results && data.recent_results.length > currentResults.length) {
-    currentResults = data.recent_results;
-    renderTable();
+  if (data.has_sc_excel) {
+    btnDownloadSc.classList.remove('hidden');
+    btnDownloadSc.href = `/api/download/siamchai?token=${authToken}`;
+  } else {
+    btnDownloadSc.classList.add('hidden');
   }
 
-  // Download button
-  if (data.has_excel) {
-    btnDownload.classList.remove('hidden');
-    btnDownload.href = `/api/download?token=${authToken}`;
+  // 2. TrueCorp Card Update
+  updateStatusBadge(trStatusPill, data.tr_status);
+  trProgressInfo.textContent = `${data.tr_current_index || 0} / ${data.total || 0} รายการ`;
+  trProgressPercent.textContent = `${data.tr_percent || 0}%`;
+  trProgressBar.style.width = `${data.tr_percent || 0}%`;
+  trCurrCid.textContent = `กำลังค้นหา: ${data.tr_current_cid || '-'}`;
+  trCountFound.textContent = `พบข้อมูล: ${data.tr_count || 0} รายการ`;
+
+  if (data.has_tr_excel) {
+    btnDownloadTr.classList.remove('hidden');
+    btnDownloadTr.href = `/api/download/true?token=${authToken}`;
+  } else {
+    btnDownloadTr.classList.add('hidden');
+  }
+
+  // 3. Combined Download Button Update
+  if (data.has_combined_excel || data.has_excel) {
+    btnDownloadCombined.classList.remove('hidden');
+    btnDownloadCombined.href = `/api/download/combined?token=${authToken}`;
+  } else {
+    btnDownloadCombined.classList.add('hidden');
+  }
+
+  // 4. Results Table Update
+  if (data.results && data.results.length !== currentResults.length) {
+    currentResults = data.results;
+    renderTable();
   }
 }
 

@@ -265,3 +265,153 @@ def save_combined_results_to_excel(results, job_name="unified_extract"):
 
     wb.save(filepath)
     return filepath
+
+def save_siamchai_results_to_excel(results, job_name="siamchai_extract"):
+    """
+    Save Siamchai 17-column results to a dedicated Excel file.
+    """
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = re.sub(r"[^\w\-]", "_", job_name)
+    filename = f"{safe_name}_{timestamp}.xlsx"
+    filepath = os.path.join(RESULTS_DIR, filename)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "สยามชัย (17 คอลัมน์)"
+
+    header_fill = PatternFill(start_color="6B21A8", end_color="6B21A8", fill_type="solid")
+    header_font = Font(name="Tahoma", size=10, bold=True, color="FFFFFF")
+    data_font = Font(name="Tahoma", size=9)
+    border_thin = Border(
+        left=Side(style="thin", color="E2E8F0"),
+        right=Side(style="thin", color="E2E8F0"),
+        top=Side(style="thin", color="E2E8F0"),
+        bottom=Side(style="thin", color="E2E8F0")
+    )
+
+    headers = [
+        "ลำดับ", "เลขบัตรที่ใช้ค้นหา", "ชื่อ-นามสกุล", "สถานะ",
+        "เลขบัตรประชาชนผู้เช่าซื้อ", "ชื่อ-นามสกุลผู้เช่าซื้อ", "เบอร์โทรผู้เช่าซื้อ",
+        "ที่อยู่ตามบัตรประชาชนผู้เช่าซื้อ", "ที่อยู่ปัจจุบันผู้เช่าซื้อ",
+        "ที่อยู่ที่ทำงานผู้เช่าซื้อ", "เบอร์โทรที่ทำงาน", "ตำแหน่ง",
+        "เลขบัตรประชาชนผู้ค้ำ", "ชื่อ-นามสกุลผู้ค้ำ", "เบอร์โทรผู้ค้ำ",
+        "ความสัมพันธ์", "ที่อยู่ผู้ค้ำ", "ที่ทำงานผู้ค้ำ"
+    ]
+    ws.append(headers)
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(1, col_idx)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    for idx, r in enumerate(results, 1):
+        sc = r.get("siamchai", {})
+        cid = r.get("cid", "")
+        row_vals = [
+            idx,
+            f"'{cid}" if cid else "",
+            sc.get("ชื่อ-นามสกุล", "-"),
+            sc.get("สถานะ", "-"),
+            sc.get("เลขบัตรประชาชนผู้เช่าซื้อ", "-"),
+            sc.get("ชื่อ-นามสกุลผู้เช่าซื้อ", "-"),
+            sc.get("เบอร์โทรผู้เช่าซื้อ", "-"),
+            sc.get("ที่อยู่ตามบัตรประชาชนผู้เช่าซื้อ", "-"),
+            sc.get("ที่อยู่ปัจจุบันผู้เช่าซื้อ", "-"),
+            sc.get("ที่อยู่ที่ทำงานผู้เช่าซื้อ", "-"),
+            sc.get("เบอร์โทรที่ทำงาน", "-"),
+            sc.get("ตำแหน่ง", "-"),
+            sc.get("เลขบัตรประชาชนผู้ค้ำ", "-"),
+            sc.get("ชื่อ-นามสกุลผู้ค้ำ", "-"),
+            sc.get("เบอร์โทรผู้ค้ำ", "-"),
+            sc.get("ความสัมพันธ์", "-"),
+            sc.get("ที่อยู่ผู้ค้ำ", "-"),
+            sc.get("ที่ทำงานผู้ค้ำ", "-"),
+        ]
+        ws.append(row_vals)
+        for c in range(1, len(row_vals) + 1):
+            cell = ws.cell(idx + 1, c)
+            cell.font = data_font
+            cell.border = border_thin
+            if c in [1, 2, 4]:
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            val_str = str(cell.value or "")
+            if len(val_str) > max_len:
+                max_len = len(val_str)
+        ws.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 45)
+
+    wb.save(filepath)
+    return filepath
+
+def save_true_results_to_excel(results, job_name="true_extract"):
+    """
+    Save TrueCorp Active Number results to a dedicated Excel file.
+    """
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = re.sub(r"[^\w\-]", "_", job_name)
+    filename = f"{safe_name}_{timestamp}.xlsx"
+    filepath = os.path.join(RESULTS_DIR, filename)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "ทรู (Active Numbers)"
+
+    header_fill = PatternFill(start_color="991B1B", end_color="991B1B", fill_type="solid")
+    header_font = Font(name="Tahoma", size=10, bold=True, color="FFFFFF")
+    data_font = Font(name="Tahoma", size=9)
+    border_thin = Border(
+        left=Side(style="thin", color="E2E8F0"),
+        right=Side(style="thin", color="E2E8F0"),
+        top=Side(style="thin", color="E2E8F0"),
+        bottom=Side(style="thin", color="E2E8F0")
+    )
+
+    headers = [
+        "ลำดับ", "เลขบัตรที่ใช้ค้นหา", "สถานะ", "จำนวนเบอร์ Active",
+        "รายการเบอร์โทรศัพท์ (Active)", "เบอร์โทรศัพท์ทั้งหมดที่พบ", "สถานะทุกเบอร์"
+    ]
+    ws.append(headers)
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(1, col_idx)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    for idx, r in enumerate(results, 1):
+        tr = r.get("true", {})
+        cid = r.get("cid", "")
+        row_vals = [
+            idx,
+            f"'{cid}" if cid else "",
+            tr.get("status", "-"),
+            tr.get("active_count", 0),
+            tr.get("active_phones", "-"),
+            tr.get("all_phones", "-"),
+            tr.get("phone_details", "-"),
+        ]
+        ws.append(row_vals)
+        for c in range(1, len(row_vals) + 1):
+            cell = ws.cell(idx + 1, c)
+            cell.font = data_font
+            cell.border = border_thin
+            if c in [1, 2, 3, 4]:
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            val_str = str(cell.value or "")
+            if len(val_str) > max_len:
+                max_len = len(val_str)
+        ws.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 45)
+
+    wb.save(filepath)
+    return filepath
+

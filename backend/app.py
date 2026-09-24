@@ -205,20 +205,44 @@ async def upload_excel(file: UploadFile = File(...), user: str = Depends(get_cur
     }
 
 @app.get("/api/download")
-async def download_excel(token: Optional[str] = None):
-    # Verify token
-    if token:
+async def download_excel(type: str = "combined", token: Optional[str] = None, request: Request = None):
+    # Verify token from query or cookie
+    auth_t = token or (request.cookies.get(COOKIE_NAME) if request else None)
+    if auth_t:
         try:
-            verify_session_token(token)
+            verify_session_token(auth_t)
         except Exception:
             raise HTTPException(status_code=401, detail="Unauthorized")
-    if not unified_job.excel_path or not os.path.exists(unified_job.excel_path):
-        raise HTTPException(status_code=404, detail="ยังไม่มีไฟล์ Excel ให้ดาวน์โหลด")
+    
+    target_path = None
+    if type == "siamchai":
+        target_path = unified_job.sc_excel_path
+    elif type == "true":
+        target_path = unified_job.tr_excel_path
+    else: # combined
+        target_path = unified_job.combined_excel_path or unified_job.sc_excel_path or unified_job.tr_excel_path
+
+    if not target_path or not os.path.exists(target_path):
+        raise HTTPException(status_code=404, detail="ยังไม่มีไฟล์ Excel ให้ดาวน์โหลดสำหรับส่วนนี้")
+
     return FileResponse(
-        path=unified_job.excel_path,
-        filename=os.path.basename(unified_job.excel_path),
+        path=target_path,
+        filename=os.path.basename(target_path),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+@app.get("/api/download/siamchai")
+async def download_siamchai_excel(token: Optional[str] = None, request: Request = None):
+    return await download_excel(type="siamchai", token=token, request=request)
+
+@app.get("/api/download/true")
+async def download_true_excel(token: Optional[str] = None, request: Request = None):
+    return await download_excel(type="true", token=token, request=request)
+
+@app.get("/api/download/combined")
+async def download_combined_excel(token: Optional[str] = None, request: Request = None):
+    return await download_excel(type="combined", token=token, request=request)
+
 
 # ------------------ Config Endpoints ------------------
 @app.get("/api/config")
