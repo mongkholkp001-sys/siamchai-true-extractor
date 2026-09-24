@@ -25,7 +25,7 @@ def create_session_token(username: str) -> str:
 
 def verify_session_token(token: str) -> str:
     """Returns username if valid, otherwise raises HTTPException"""
-    if not token:
+    if not token or str(token).strip() in ["", "undefined", "null", "None"]:
         raise HTTPException(status_code=401, detail="Missing authentication token")
     parts = token.split(":")
     if len(parts) != 3:
@@ -49,19 +49,29 @@ async def get_current_user(
     cookie_token: str = Depends(cookie_sec),
     auth_header: HTTPAuthorizationCredentials = Depends(bearer_sec)
 ) -> str:
-    token = None
-    if cookie_token:
-        token = cookie_token
-    elif auth_header:
-        token = auth_header.credentials
-    else:
-        # Check query param as fallback for downloads / websockets
-        token = request.query_params.get("token")
+    # 1. Prefer session cookie if valid
+    if cookie_token and cookie_token not in ["undefined", "null", ""]:
+        try:
+            return verify_session_token(cookie_token)
+        except Exception:
+            pass
 
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    # 2. Check Bearer token from header
+    if auth_header and auth_header.credentials and auth_header.credentials not in ["undefined", "null", ""]:
+        try:
+            return verify_session_token(auth_header.credentials)
+        except Exception:
+            pass
 
-    return verify_session_token(token)
+    # 3. Check query param fallback
+    token = request.query_params.get("token")
+    if token and token not in ["undefined", "null", ""]:
+        try:
+            return verify_session_token(token)
+        except Exception:
+            pass
+
+    raise HTTPException(status_code=401, detail="Not authenticated")
 
 def authenticate_user(username, password) -> bool:
     cfg = load_config()

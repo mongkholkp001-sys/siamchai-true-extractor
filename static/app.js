@@ -138,13 +138,24 @@ btnApplyManual.addEventListener('click', () => {
 
 // ------------------ Actions: Start / Stop ------------------
 btnStart.addEventListener('click', async () => {
+  // Auto-fallback: if currentCids is empty, check manual input textarea
+  if (!currentCids.length && manualCids && manualCids.value.trim()) {
+    const lines = manualCids.value.split('\n').map(l => l.replace(/\D/g, '').trim()).filter(l => l.length >= 10);
+    if (lines.length) {
+      currentCids = lines;
+      cidBadge.textContent = `${lines.length} รายการ`;
+      cidBadge.classList.remove('hidden');
+      addLog(`✍️ นำเข้าเลขอัตโนมัติจากช่องพิมพ์: ${lines.length} รายการ`);
+    }
+  }
+
   if (!currentCids.length) {
-    alert('กรุณาอัปโหลดไฟล์ Excel หรือระบุเลขค้นหาก่อน');
+    alert('กรุณาอัปโหลดไฟล์ Excel หรือพิมพ์เลขบัตรประชาชน (13 หลัก) ก่อนกดเริ่มค้นหา');
     return;
   }
 
-  const useSc = checkSiamchai.checked;
-  const useTr = checkTrue.checked;
+  const useSc = checkSiamchai ? checkSiamchai.checked : true;
+  const useTr = checkTrue ? checkTrue.checked : true;
   if (!useSc && !useTr) {
     alert('กรุณาเลือกช่องทางในการค้นหาอย่างน้อย 1 ระบบ (สยามชัย หรือ ทรู)');
     return;
@@ -154,35 +165,43 @@ btnStart.addEventListener('click', async () => {
   if (useSc && !useTr) mode = 'siamchai';
   if (!useSc && useTr) mode = 'true';
 
+  const isHeadless = checkHeadless ? checkHeadless.checked : true;
+
   btnStart.disabled = true;
+  btnStart.innerHTML = `<span>⏳ กำลังส่งคำสั่งเริ่มค้นหา...</span>`;
   btnStop.disabled = false;
   btnDownloadCombined.classList.add('hidden');
   btnDownloadSc.classList.add('hidden');
   btnDownloadTr.classList.add('hidden');
 
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
     const res = await fetch('/api/start', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      },
+      headers: headers,
+      credentials: 'same-origin',
       body: JSON.stringify({
         cids: currentCids,
         mode: mode,
         job_name: 'search_job',
-        headless: checkHeadless.checked
+        headless: isHeadless
       })
     });
     const data = await res.json();
-    if (!res.ok) {
+    if (res.ok) {
+      addLog(`🚀 คำสั่งเริ่มค้นหาสำเร็จ: ${currentCids.length} รายการ (โหมด: ${mode})`);
+    } else {
       alert(data.detail || 'ไม่สามารถเริ่มการทำงานได้');
       btnStart.disabled = false;
+      btnStart.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><span>เริ่มค้นหา (แยกค้นอิสระ ไม่ต้องรอกัน)</span>`;
       btnStop.disabled = true;
     }
   } catch (err) {
-    alert('เกิดข้อผิดพลาด: ' + err.message);
+    alert('เกิดข้อผิดพลาดในการเชื่อมต่อ: ' + err.message);
     btnStart.disabled = false;
+    btnStart.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><span>เริ่มค้นหา (แยกค้นอิสระ ไม่ต้องรอกัน)</span>`;
     btnStop.disabled = true;
   }
 });
@@ -393,6 +412,35 @@ function connectWebSocket() {
     setTimeout(connectWebSocket, 2000);
   };
 }
+
+// ------------------ Dual HTTP Polling Fallback (100% Guaranteed Update) ------------------
+let isPolling = false;
+async function pollStatusFallback() {
+  if (isPolling) return;
+  isPolling = true;
+  try {
+    const headers = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const res = await fetch('/api/status', {
+      headers: headers,
+      credentials: 'same-origin'
+    });
+    if (res.ok) {
+      const data = await res.json();
+      updateUI(data);
+      // If websocket was down, still show connected via HTTP
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        document.getElementById('conn-badge').className = 'flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+        document.getElementById('conn-text').textContent = 'เชื่อมต่อเซิร์ฟเวอร์ (HTTP Live)';
+      }
+    }
+  } catch (e) {
+    // Network hiccup
+  } finally {
+    isPolling = false;
+  }
+}
+setInterval(pollStatusFallback, 1200);
 
 function updateStatusBadge(el, status) {
   if (!el) return;

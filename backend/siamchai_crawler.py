@@ -108,9 +108,11 @@ class SiamchaiCrawler:
             f"--user-data-dir={self.profile_dir}",
             "--window-size=1920,1080",
             "--disable-blink-features=AutomationControlled",
+            "--blink-settings=imagesEnabled=false",
+            "--disable-extensions",
         ]
         if os.name != "nt":
-            args.extend(["--no-sandbox", "--disable-setuid-sandbox"])
+            args.extend(["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
 
         if self.headless or os.name != "nt":
             args.extend(["--headless=new", "--disable-gpu"])
