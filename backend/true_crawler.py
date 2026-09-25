@@ -269,20 +269,44 @@ class TrueCrawler:
         return True
 
     def click_all_down_arrows(self):
-        arrows = self.driver.find_elements(By.CSS_SELECTOR, 'svg[data-testid="KeyboardArrowDownRoundedIcon"]')
-        for a in arrows:
+        """
+        คลิกเปิดลูกศรลงทุกอันที่มีในหน้า (รวมถึงลูกศรย่อยที่โผล่ขึ้นมาใหม่)
+        พร้อมระบบ Grace Wait ป้องกันการหลุดรอบเมื่อ Sub-table กำลังโหลด
+        """
+        click_count = 0
+        max_clicks = 30
+        consecutive_empty = 0
+
+        while click_count < max_clicks:
+            self.handle_popups_and_errors()
+            unclicked = self.driver.find_elements(
+                By.CSS_SELECTOR,
+                'svg[data-testid="KeyboardArrowDownRoundedIcon"]:not([data-bot-clicked="true"])'
+            )
+            if not unclicked:
+                consecutive_empty += 1
+                if consecutive_empty < 2:
+                    time.sleep(0.6)
+                    continue
+                else:
+                    break
+
+            consecutive_empty = 0
+            target_arrow = unclicked[0]
+            self.driver.execute_script("arguments[0].setAttribute('data-bot-clicked', 'true');", target_arrow)
+            click_count += 1
             try:
-                a.click()
+                ActionChains(self.driver).move_to_element(target_arrow).click().perform()
             except Exception:
                 try:
                     self.driver.execute_script("""
                         const el = arguments[0];
                         const btn = el.closest('button, [role="button"], tr, td, div') || el.parentElement || el;
                         btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                    """, a)
+                    """, target_arrow)
                 except Exception:
                     pass
-            time.sleep(0.15)
+            time.sleep(0.4)
 
     def extract_phone_numbers(self, current_cid: str = "") -> Tuple[List[str], List[str], Dict[str, str]]:
         active_phones = []
@@ -297,12 +321,12 @@ class TrueCrawler:
                 continue
 
             matches = re.findall(r'0\d{1,2}-?\d{3}-?\d{4}', text)
-            is_active_row = "Active" in text or "active" in text.lower() or "ใช้งาน" in text
+            is_active_row = any(k in text for k in ["Active", "active", "ACTIVE", "ใช้งาน"])
 
             for ph in matches:
                 clean = ph.strip()
-                # Exclude if it's the CID itself or a substring of the CID
-                if clean == current_cid or clean in current_cid or clean.startswith("000"):
+                # Exclude if it's the CID itself or starts with 000
+                if clean == current_cid or clean.replace("-", "") in current_cid or clean.startswith("000"):
                     continue
                 if clean not in all_phones:
                     all_phones.append(clean)
@@ -311,22 +335,45 @@ class TrueCrawler:
                     phone_status[clean] = "Active"
                     if clean not in active_phones:
                         active_phones.append(clean)
-                elif "Cancelled" in text or "Cancel" in text or "ยกเลิก" in text:
+                elif any(k in text for k in ["Cancelled", "Cancel", "ยกเลิก", "Inactive", "Suspended"]):
                     if clean not in phone_status:
                         phone_status[clean] = "Cancelled"
                 elif clean not in phone_status:
                     phone_status[clean] = "พบในระบบ"
+
+        # 2. Also scan entire page source for any numbers outside tr
+        try:
+            page_source = self.driver.page_source
+            extra_matches = re.findall(r'0\d{1,2}-\d{3}-\d{4}', page_source)
+            for ph in extra_matches:
+                clean = ph.strip()
+                if clean not in all_phones and clean.replace("-", "") not in current_cid and not clean.startswith("000"):
+                    all_phones.append(clean)
+                    if clean not in phone_status:
+                        phone_status[clean] = "Active" if "Active" in page_source else "พบในระบบ"
+        except Exception:
+            pass
 
         return all_phones, active_phones, phone_status
 
     def search_one(self, cid: str) -> Dict[str, any]:
         cid_str = str(cid).strip()
         if not cid_str:
-            return {"cid": cid_str, "status": "ไม่พบข้อมูล", "active_count": 0, "active_phones": "-", "all_phones": "-", "phone_details": "-"}
+            return {
+                "cid": cid_str,
+                "status": "ไม่พบข้อมูล",
+                "total_count": 0,
+                "all_phones": "-",
+                "active_count": 0,
+                "active_phones": "-",
+                "phone_details": "-",
+                "count": 0,
+                "phones": "-"
+            }
 
         for attempt in range(1, 3):
             try:
-                # 1. หากยังอยู่ที่หน้าผลลัพธ์เดิม ให้กดปุ่มย้อนกลับทันที (เร็วมาก ไม่ต้องโหลดหน้าใหม่)
+                # 1. หากยังอยู่ที่หน้าผลลัพธ์เดิม ให้กดปุ่มย้อนกลับทันที
                 if "verify-detail" in self.driver.current_url:
                     try:
                         back_btns = self.driver.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ')]")
@@ -369,7 +416,7 @@ class TrueCrawler:
                               len(d.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ')]")) > 0
                 )
 
-                # รอให้ข้อมูลสัญญาหรือลูกศรคลี่ตารางแสดงผลครบถ้วน (ป้องกันการดึงข้อมูลเร็วเกินไปก่อนที่ระบบทรูจะโหลดเสร็จ)
+                # รอให้ข้อมูลสัญญาหรือลูกศรคลี่ตารางแสดงผลครบถ้วน
                 wait_data_start = time.time()
                 while time.time() - wait_data_start < 5:
                     self.handle_popups_and_errors()
@@ -385,18 +432,23 @@ class TrueCrawler:
 
                 time.sleep(0.5)
 
-                # 5. คลิกลูกศรลงทั้งหมดเพื่อกางตารางเบอร์โทร
+                # 5. คลิกลูกศรลงทั้งหมดเพื่อกางตารางเบอร์โทรทั้งหมด
                 self.click_all_down_arrows()
                 time.sleep(0.5)
                 self.capture_screen()
 
-                # 6. กวาดหาเบอร์ Active และเบอร์ทั้งหมด
+                # 6. กวาดหาเบอร์ทั้งหมด และเบอร์ Active
                 all_ph, active_ph, status_map = self.extract_phone_numbers(current_cid=cid_str)
 
-                count = len(active_ph)
-                active_str = ", ".join(active_ph) if count > 0 else "-"
-                all_str = ", ".join(all_ph) if all_ph else "-"
+                total_count = len(all_ph)
+                active_count = len(active_ph)
+
+                all_str = "; ".join(all_ph) if all_ph else "-"
+                active_str = "; ".join(active_ph) if active_ph else "-"
                 details_str = "; ".join([f"{k} ({v})" for k, v in status_map.items()]) if status_map else "-"
+
+                # เจออะไรก็เอาออกมาให้หมด: ถ้าพบเบอร์ ให้สถานะเป็น "สำเร็จ" ทันที
+                status_desc = "สำเร็จ" if total_count > 0 else "ไม่พบข้อมูล"
 
                 # 7. กดกลับสู่หน้าตรวจสอบทันทีสำหรับเลขถัดไป
                 try:
@@ -412,12 +464,20 @@ class TrueCrawler:
 
                 return {
                     "cid": cid_str,
-                    "status": "สำเร็จ" if count > 0 else ("ไม่พบเบอร์ Active" if all_ph else "ไม่พบข้อมูล"),
-                    "active_count": count,
-                    "active_phones": active_str,
+                    "status": status_desc,
+                    "total_count": total_count,
                     "all_phones": all_str,
-                    "phone_details": details_str
+                    "active_count": active_count,
+                    "active_phones": active_str,
+                    "phone_details": details_str,
+                    # Backward compatibility
+                    "count": total_count,
+                    "phones": all_str
                 }
+            except Exception as e:
+                if attempt == 2:
+                    raise e
+                time.sleep(1)
 
             except Exception as e:
                 self.log(f"ข้อผิดพลาดทรู (รอบ {attempt}): {e}")

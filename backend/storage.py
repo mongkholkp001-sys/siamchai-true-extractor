@@ -231,7 +231,7 @@ def save_combined_results_to_excel(results, job_name="unified_extract"):
     ws1 = wb.create_sheet(title="สรุปรวม")
     headers1 = [
         "ลำดับ", "เลขบัตรที่ใช้ค้นหา", "ชื่อ-นามสกุล", "สถานะสยามชัย",
-        "เบอร์โทรผู้เช่าซื้อ (สยามชัย)", "จำนวนเบอร์ทรู (Active)", "รายการเบอร์ทรู (Active)",
+        "เบอร์โทรผู้เช่าซื้อ (สยามชัย)", "จำนวนเบอร์ทรูทั้งหมด", "รายการเบอร์ทรูทั้งหมดที่พบ", "เบอร์ทรูเฉพาะ Active",
         "เลขบัตรผู้ค้ำ", "ชื่อผู้ค้ำ", "เบอร์โทรผู้ค้ำ", "ที่อยู่ปัจจุบัน", "ที่ทำงาน"
     ]
     ws1.append(headers1)
@@ -252,7 +252,8 @@ def save_combined_results_to_excel(results, job_name="unified_extract"):
             sc.get("ชื่อ-นามสกุล") or tr.get("name", ""),
             sc.get("สถานะ", "-"),
             sc.get("เบอร์โทรผู้เช่าซื้อ", "-"),
-            tr.get("active_count", 0),
+            tr.get("total_count", tr.get("count", 0)),
+            tr.get("all_phones", "-"),
             tr.get("active_phones", "-"),
             sc.get("เลขบัตรประชาชนผู้ค้ำ", "-"),
             sc.get("ชื่อ-นามสกุลผู้ค้ำ", "-"),
@@ -319,8 +320,8 @@ def save_combined_results_to_excel(results, job_name="unified_extract"):
     # ---------------- SHEET 3: ทรู (True Pre-Verify) ----------------
     ws3 = wb.create_sheet(title="ทรู")
     headers3 = [
-        "ลำดับ", "เลขบัตรที่ใช้ค้นหา", "สถานะ", "จำนวนเบอร์ Active",
-        "รายการเบอร์โทรศัพท์ (Active)", "เบอร์โทรศัพท์ทั้งหมดที่พบ", "สถานะทุกเบอร์"
+        "ลำดับ", "เลขบัตรที่ใช้ค้นหา", "สถานะการดึง", "จำนวนเบอร์ทั้งหมด",
+        "รายการเบอร์โทรศัพท์ทั้งหมด", "เบอร์เฉพาะ Active", "รายการเบอร์โทรศัพท์ (พร้อมสถานะ)"
     ]
     ws3.append(headers3)
     for col_idx in range(1, len(headers3) + 1):
@@ -336,9 +337,9 @@ def save_combined_results_to_excel(results, job_name="unified_extract"):
             idx,
             f"'{cid}" if cid else "",
             tr.get("status", "-"),
-            tr.get("active_count", 0),
-            tr.get("active_phones", "-"),
+            tr.get("total_count", tr.get("count", 0)),
             tr.get("all_phones", "-"),
+            tr.get("active_phones", "-"),
             tr.get("phone_details", "-"),
         ]
         ws3.append(row_vals)
@@ -457,7 +458,7 @@ def save_true_results_to_excel(results, job_name="true_extract"):
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "ทรู (Active Numbers)"
+    ws.title = "ทรู (เบอร์โทรทั้งหมด)"
 
     header_fill = PatternFill(start_color="991B1B", end_color="991B1B", fill_type="solid")
     header_font = Font(name="Tahoma", size=10, bold=True, color="FFFFFF")
@@ -470,8 +471,8 @@ def save_true_results_to_excel(results, job_name="true_extract"):
     )
 
     headers = [
-        "ลำดับ", "เลขบัตรที่ใช้ค้นหา", "สถานะ", "จำนวนเบอร์ Active",
-        "รายการเบอร์โทรศัพท์ (Active)", "เบอร์โทรศัพท์ทั้งหมดที่พบ", "สถานะทุกเบอร์"
+        "ลำดับ", "เลขบัตรที่ใช้ค้นหา", "สถานะการดึง", "จำนวนเบอร์ทั้งหมด",
+        "รายการเบอร์โทรศัพท์ทั้งหมด", "เบอร์เฉพาะ Active", "รายการเบอร์โทรศัพท์ (พร้อมสถานะ)"
     ]
     ws.append(headers)
     for col_idx in range(1, len(headers) + 1):
@@ -487,9 +488,9 @@ def save_true_results_to_excel(results, job_name="true_extract"):
             idx,
             f"'{cid}" if cid else "",
             tr.get("status", "-"),
-            tr.get("active_count", 0),
-            tr.get("active_phones", "-"),
+            tr.get("total_count", tr.get("count", 0)),
             tr.get("all_phones", "-"),
+            tr.get("active_phones", "-"),
             tr.get("phone_details", "-"),
         ]
         ws.append(row_vals)

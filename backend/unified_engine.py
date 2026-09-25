@@ -88,7 +88,13 @@ class UnifiedJobState:
             )
             tr_found = sum(
                 1 for r in self.tr_results.values()
-                if r and (r.get("active_count", 0) > 0 or r.get("status") in ["สำเร็จ", "พบเบอร์ Active"])
+                if r and (
+                    r.get("total_count", 0) > 0 
+                    or r.get("count", 0) > 0 
+                    or r.get("active_count", 0) > 0 
+                    or (r.get("all_phones") not in ["-", "", None]) 
+                    or r.get("status") in ["สำเร็จ", "พบเบอร์ Active", "พบข้อมูล"]
+                )
             )
 
             created_time_str = time.strftime("%d/%m/%Y %H:%M:%S", time.localtime(self.created_at))
@@ -327,17 +333,40 @@ def true_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict
                         time.sleep(1.5)
                     else:
                         job.add_log(f"❌ [ทรู {i}/{total}] เลข {cid} ตรวจสอบครบ {max_attempts} ครั้งแล้ว: {err_msg[:80]}")
-                        res = {"status": f"Error: {err_msg}", "active_count": 0, "active_phones": "-"}
+                        res = {
+                            "cid": cid,
+                            "name": "-",
+                            "status": f"Error: {err_msg}",
+                            "total_count": 0,
+                            "count": 0,
+                            "all_phones": "-",
+                            "active_count": 0,
+                            "active_phones": "-",
+                            "phone_details": "-",
+                            "details": []
+                        }
 
             if not res:
-                res = {"status": "ไม่พบข้อมูล", "active_count": 0, "active_phones": "-"}
+                res = {
+                    "cid": cid,
+                    "name": "-",
+                    "status": "ไม่พบข้อมูล",
+                    "total_count": 0,
+                    "count": 0,
+                    "all_phones": "-",
+                    "active_count": 0,
+                    "active_phones": "-",
+                    "phone_details": "-",
+                    "details": []
+                }
 
             with job.lock:
                 job.tr_results[cid] = res
 
+            total_cnt = res.get("total_count", res.get("count", 0))
+            all_phones = res.get("all_phones", "-")
             active_cnt = res.get("active_count", 0)
-            active_phones = res.get("active_phones", "-")
-            job.add_log(f"🔴 [ทรู {i}/{total}] เลข {cid}: พบ {active_cnt} เบอร์ ({active_phones})")
+            job.add_log(f"🔴 [ทรู {i}/{total}] เลข {cid}: พบ {total_cnt} เบอร์ ({all_phones}) [Active: {active_cnt}]")
             time.sleep(0.6)
 
     except Exception as e:

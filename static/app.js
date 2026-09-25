@@ -298,7 +298,7 @@ function renderTable() {
         <th class="py-2.5 px-3">ชื่อ-นามสกุล</th>
         <th class="py-2.5 px-3">สถานะสยามชัย</th>
         <th class="py-2.5 px-3">เบอร์สยามชัย</th>
-        <th class="py-2.5 px-3">เบอร์ทรู (Active)</th>
+        <th class="py-2.5 px-3">เบอร์ทรูทั้งหมดที่พบ</th>
         <th class="py-2.5 px-3">ผู้ค้ำประกัน</th>
         <th class="py-2.5 px-3">ที่อยู่</th>
       </tr>
@@ -310,9 +310,17 @@ function renderTable() {
       const name = sc['ชื่อ-นามสกุล'] || tr.name || '-';
       const scStatus = sc['สถานะ'] || '-';
       const scPhone = sc['เบอร์โทรผู้เช่าซื้อ'] || '-';
-      const trActive = tr.active_count > 0 
-        ? `<span class="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">${tr.active_phones}</span>` 
-        : '<span class="text-slate-500">-</span>';
+      
+      const allPhones = tr.all_phones && tr.all_phones !== '-' ? tr.all_phones : '';
+      const activePhones = tr.active_phones && tr.active_phones !== '-' ? tr.active_phones : '';
+      let trDisplay = '<span class="text-slate-500">-</span>';
+      if (allPhones) {
+        trDisplay = `<span class="px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-300 border border-rose-500/30 font-medium font-mono">${allPhones}</span>`;
+        if (activePhones && activePhones !== '-') {
+          trDisplay += `<span class="ml-1.5 px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" title="Active: ${activePhones}">Active</span>`;
+        }
+      }
+
       const coName = sc['ชื่อ-นามสกุลผู้ค้ำ'] ? `${sc['ชื่อ-นามสกุลผู้ค้ำ']} (${sc['เบอร์โทรผู้ค้ำ'] || '-'})` : '-';
       const addr = sc['ที่อยู่ปัจจุบันผู้เช่าซื้อ'] || '-';
 
@@ -323,7 +331,7 @@ function renderTable() {
           <td class="py-2 px-3 font-medium text-slate-200">${name}</td>
           <td class="py-2 px-3"><span class="px-2 py-0.5 rounded text-[11px] ${scStatus.includes('สำเร็จ') || scStatus.includes('เช่าซื้อ') ? 'bg-indigo-500/15 text-indigo-300' : 'bg-slate-800 text-slate-400'}">${scStatus}</span></td>
           <td class="py-2 px-3 font-mono text-sky-300">${scPhone}</td>
-          <td class="py-2 px-3">${trActive}</td>
+          <td class="py-2 px-3">${trDisplay}</td>
           <td class="py-2 px-3 text-slate-300">${coName}</td>
           <td class="py-2 px-3 text-slate-400 truncate max-w-xs" title="${addr}">${addr}</td>
         </tr>
@@ -365,23 +373,30 @@ function renderTable() {
       <tr>
         <th class="py-2.5 px-3">#</th>
         <th class="py-2.5 px-3">เลขค้นหา</th>
-        <th class="py-2.5 px-3">สถานะทรู</th>
-        <th class="py-2.5 px-3">จำนวนเบอร์ Active</th>
-        <th class="py-2.5 px-3">รายการเบอร์ Active</th>
-        <th class="py-2.5 px-3">เบอร์ทั้งหมดที่พบ</th>
+        <th class="py-2.5 px-3">สถานะ</th>
+        <th class="py-2.5 px-3">จำนวนเบอร์ทั้งหมด</th>
+        <th class="py-2.5 px-3">รายการเบอร์โทรศัพท์ทั้งหมด</th>
+        <th class="py-2.5 px-3">เบอร์เฉพาะ Active</th>
+        <th class="py-2.5 px-3">รายละเอียดทุกเบอร์</th>
       </tr>
     `;
 
     tableBody.innerHTML = currentResults.map((r, i) => {
       const tr = r.true || {};
+      const totalCnt = tr.total_count !== undefined ? tr.total_count : (tr.count || 0);
+      const allPh = tr.all_phones || '-';
+      const actPh = tr.active_phones || '-';
+      const dtPh = tr.phone_details || '-';
+
       return `
         <tr class="hover:bg-slate-900/40">
           <td class="py-2 px-3 font-mono text-slate-500">${i + 1}</td>
           <td class="py-2 px-3 font-mono font-medium text-white">${r.cid}</td>
-          <td class="py-2 px-3">${tr.status || '-'}</td>
-          <td class="py-2 px-3 font-mono font-bold text-rose-400">${tr.active_count || 0}</td>
-          <td class="py-2 px-3 font-mono text-emerald-400">${tr.active_phones || '-'}</td>
-          <td class="py-2 px-3 font-mono text-slate-400 truncate max-w-xs">${tr.all_phones || '-'}</td>
+          <td class="py-2 px-3"><span class="px-2 py-0.5 rounded text-[11px] ${tr.status && tr.status.includes('สำเร็จ') ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-800 text-slate-400'}">${tr.status || '-'}</span></td>
+          <td class="py-2 px-3 font-mono font-bold ${totalCnt > 0 ? 'text-rose-400' : 'text-slate-500'}">${totalCnt}</td>
+          <td class="py-2 px-3 font-mono text-rose-300 font-semibold">${allPh !== '-' ? allPh : '<span class="text-slate-500">-</span>'}</td>
+          <td class="py-2 px-3 font-mono text-emerald-400">${actPh !== '-' ? actPh : '<span class="text-slate-500">-</span>'}</td>
+          <td class="py-2 px-3 font-mono text-slate-400 truncate max-w-xs" title="${dtPh}">${dtPh}</td>
         </tr>
       `;
     }).join('');
@@ -553,7 +568,7 @@ function updateUI(data) {
   trProgressBar.style.width = `${data.tr_percent || 0}%`;
   trCurrCid.textContent = `กำลังค้นหา: ${data.tr_current_cid || '-'}`;
   const trFound = data.tr_found_count !== undefined ? data.tr_found_count : (data.tr_count || 0);
-  trCountFound.textContent = `พบเบอร์ Active: ${trFound} รายการ (ค้นแล้ว ${data.tr_count || 0})`;
+  trCountFound.textContent = `พบเบอร์โทรศัพท์: ${trFound} รายการ (ค้นแล้ว ${data.tr_count || 0})`;
 
   if (data.has_tr_excel) {
     btnDownloadTr.classList.remove('hidden');
