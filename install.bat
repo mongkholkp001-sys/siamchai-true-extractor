@@ -1,33 +1,80 @@
 @echo off
+setlocal enabledelayedexpansion
 chcp 65001 >nul
-title ติดตั้งไลบรารีสำหรับระบบ Siamchai & TrueCorp
+title Siamchai and TrueCorp Installer
 cls
 
 echo ========================================================
-echo    ติดตั้งโปรแกรมและไลบรารีที่จำเป็น (Setup & Install)
+echo    Siamchai and TrueCorp - Setup and Installation
 echo ========================================================
 echo.
-echo [1/2] ตรวจสอบ Python...
+
+:: 1. Auto-detect Python
+set "PY_CMD="
+
 python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [X] ไม่พบ Python ในเครื่องนี้!
-    echo กรุณาติดตั้ง Python จาก https://www.python.org/downloads/
-    echo ** ข้อสำคัญ: ตอนติดตั้งอย่าลืมติ๊กถูก "Add Python to PATH" **
-    echo.
-    pause
-    exit /b
+if %errorlevel% equ 0 (
+    set "PY_CMD=python"
 )
 
-echo [OK] ตรวจพบ Python เรียบร้อยแล้ว
-echo.
-echo [2/2] กำลังติดตั้งไลบรารีที่จำเป็นทั้งหมด (FastAPI, Selenium, OpenPyXL, Pandas)...
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+if not defined PY_CMD (
+    py --version >nul 2>&1
+    if !errorlevel! equ 0 (
+        set "PY_CMD=py"
+    )
+)
 
+if not defined PY_CMD (
+    for %%V in (313 312 311 310) do (
+        if exist "%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe" (
+            set "PY_CMD=%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe"
+        )
+    )
+)
+
+if not defined PY_CMD (
+    for %%V in (313 312 311 310) do (
+        if exist "%ProgramFiles%\Python%%V\python.exe" (
+            set "PY_CMD=%ProgramFiles%\Python%%V\python.exe"
+        )
+    )
+)
+
+if not defined PY_CMD (
+    echo [ERROR] ไม่พบ Python ในเครื่องนี้
+    echo --------------------------------------------------------
+    echo 1. หากยังไม่ได้ติดตั้ง Python:
+    echo    กรุณาดาวน์โหลด Python 3.11 หรือ 3.12 จาก:
+    echo    https://www.python.org/downloads/
+    echo.
+    echo 2. หากติดตั้งไปแล้ว:
+    echo    - ตอนติดตั้งอย่าลืมติ๊กถูก [Add python.exe to PATH]
+    echo    - หรือลองปิดและเปิดหน้าต่างนี้ใหม่อีกครั้ง
+    echo --------------------------------------------------------
+    echo.
+    pause
+    exit /b 1
+)
+
+echo [OK] ตรวจพบ Python:
+"%PY_CMD%" --version
 echo.
-echo ========================================================
-echo    [สำเร็จ] ติดตั้งไลบรารีเรียบร้อยแล้ว!
-echo    สามารถดับเบิ้ลคลิก "start_online.bat" เพื่อเปิดใช้งานได้ทันที
-echo ========================================================
+
+echo [2/2] กำลังติดตั้งไลบรารีที่จำเป็น (FastAPI, Selenium, OpenPyXL, Pandas)...
+echo --------------------------------------------------------
+"%PY_CMD%" -m pip install --upgrade pip
+"%PY_CMD%" -m pip install -r requirements.txt
+
+if %errorlevel% equ 0 (
+    echo.
+    echo ========================================================
+    echo    [SUCCESS] ติดตั้งไลบรารีเรียบร้อยสมบูรณ์แล้ว!
+    echo    สามารถดับเบิ้ลคลิก "start_online.bat" เพื่อเปิดใช้งานได้ทันที
+    echo ========================================================
+) else (
+    echo.
+    echo [ERROR] การติดตั้งไลบรารีไม่สมบูรณ์ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต
+)
+
 echo.
 pause
