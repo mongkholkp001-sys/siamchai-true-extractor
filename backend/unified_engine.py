@@ -372,17 +372,18 @@ def true_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict
 
 class JobQueueManager:
     """
-    Manages an automatic FIFO queue for search jobs across multiple users.
-    Since Siamchai and TrueCorp share a single login session, jobs run sequentially
-    to guarantee rock-solid stability without session kickouts or collisions.
+    Multi-tenant Concurrent Job Manager:
+    Allows each user to run their own search jobs independently and simultaneously.
+    No waiting in queue across different users.
+    Each user runs their own headless browser instances with isolated profiles.
     """
     def __init__(self):
         self.lock = threading.Lock()
         self.jobs: Dict[str, UnifiedJobState] = {}
-        self.queue: List[str] = []  # list of job_ids
-        self.current_job_id: Optional[str] = None
-        self.worker_thread = threading.Thread(target=self._queue_worker_loop, daemon=True)
-        self.worker_thread.start()
+        # Track active job ID per user (user_lower -> job_id)
+        self.user_active_jobs: Dict[str, str] = {}
+        # Track active worker threads per job_id
+        self.active_threads: Dict[str, threading.Thread] = {}
 
     def submit_job(
         self,
@@ -393,6 +394,18 @@ class JobQueueManager:
         headless: bool = True
     ) -> UnifiedJobState:
         with self.lock:
+            user_key = user.strip().lower()
+
+            # Prevent double click on the same user account while actively running
+            if user_key in self.user_active_jobs:
+                existing_id = self.user_active_jobs[user_key]
+                existing = self.jobs.get(existing_id)
+                if existing and existing.status in ["running", "starting"]:
+                    raise ValueError(
+                        f"บัญชี '{user}' กำลังมีงานค้นหากำลังทำงานอยู่ ({existing.total} รายการ) "
+                        "กรุณารอให้งานเดิมเสร็จสิ้น หรือกดปุ่ม 'หยุดการทำงาน' ก่อนเริ่มงานใหม่"
+                    )
+
             job_id = f"job_{int(time.time())}_{user}"
             job = UnifiedJobState(user=user, job_id=job_id)
             job.job_name = job_name
@@ -401,42 +414,51 @@ class JobQueueManager:
             job.total = len(cids)
             job.headless = headless
             job.created_at = time.time()
+            job.status = "starting"
+            job.queue_position = 0
 
-            # Set queue position
-            is_immediate = (self.current_job_id is None and len(self.queue) == 0)
-            job.status = "queued"
-            job.queue_position = 1 if is_immediate else (len(self.queue) + (1 if self.current_job_id else 0))
-            self.queue.append(job_id)
             self.jobs[job_id] = job
+            self.user_active_jobs[user_key] = job_id
 
-            if is_immediate:
-                job.add_log(f"🚀 เริ่มจัดเตรียมงานค้นหา {len(cids)} รายการ (โหมด: {mode}) โดย {user}")
-            else:
-                job.add_log(f"⏳ งาน {job_name} ({len(cids)} รายการ) อยู่ในคิวงานที่ {job.queue_position} (ระบบจะเริ่มค้นหาให้อัตโนมัติ)")
+            job.add_log(f"🚀 เริ่มค้นหาข้อมูล {len(cids)} รายการ (โหมด: {mode}) โดยผู้ใช้: {user}")
+            job.add_log("⚡ ระบบประมวลผลแยกอิสระทันที (Concurrent Mode - ไม่ต้องรอคิวใคร)")
+
+            # Launch dedicated worker thread for this job immediately!
+            t = threading.Thread(target=self._run_job_wrapper, args=(job,), daemon=True)
+            self.active_threads[job_id] = t
+            t.start()
 
             return job
 
+    def _run_job_wrapper(self, job: UnifiedJobState):
+        try:
+            self._execute_job(job)
+        except Exception as e:
+            job.add_log(f"❌ เกิดข้อผิดพลาดในการประมวลผลงาน: {e}")
+            with job.lock:
+                job.status = "error"
+        finally:
+            with self.lock:
+                if job.job_id in self.active_threads:
+                    del self.active_threads[job.job_id]
+
     def get_user_current_job(self, user: str) -> UnifiedJobState:
         with self.lock:
-            # 1. Currently running job
-            if self.current_job_id and self.current_job_id in self.jobs:
-                current = self.jobs[self.current_job_id]
-                if current.user.strip().lower() == user.strip().lower():
-                    return current
+            user_key = user.strip().lower()
 
-            # 2. Queued job for this user
-            for qid in self.queue:
-                qjob = self.jobs.get(qid)
-                if qjob and qjob.user.strip().lower() == user.strip().lower():
-                    return qjob
+            # 1. Currently active or most recent job for this user
+            if user_key in self.user_active_jobs:
+                act_id = self.user_active_jobs[user_key]
+                if act_id in self.jobs:
+                    return self.jobs[act_id]
 
-            # 3. Latest job by this user
-            user_jobs = [j for j in self.jobs.values() if j.user.strip().lower() == user.strip().lower()]
+            # 2. Latest job submitted by this user
+            user_jobs = [j for j in self.jobs.values() if j.user.strip().lower() == user_key]
             if user_jobs:
                 user_jobs.sort(key=lambda j: j.created_at, reverse=True)
                 return user_jobs[0]
 
-            # 4. Default idle job
+            # 3. Default idle state
             return UnifiedJobState(user=user)
 
     def get_job_by_id(self, job_id: str) -> Optional[UnifiedJobState]:
@@ -446,7 +468,7 @@ class JobQueueManager:
     def get_user_jobs_history(self, user: str, limit: int = 40) -> List[Dict]:
         with self.lock:
             if user.strip().lower() == "admin":
-                # Admin can see all jobs from all users
+                # Admin can see all jobs across all users
                 jobs = list(self.jobs.values())
             else:
                 jobs = [j for j in self.jobs.values() if j.user.strip().lower() == user.strip().lower()]
@@ -460,26 +482,22 @@ class JobQueueManager:
             if job_id and job_id in self.jobs:
                 target_job = self.jobs[job_id]
             else:
-                # Find current running or queued job for this user
-                if self.current_job_id and self.current_job_id in self.jobs:
-                    c = self.jobs[self.current_job_id]
-                    if c.user.strip().lower() == user.strip().lower() or user.strip().lower() == "admin":
-                        target_job = c
+                user_key = user.strip().lower()
+                if user_key in self.user_active_jobs:
+                    act_id = self.user_active_jobs[user_key]
+                    if act_id in self.jobs:
+                        target_job = self.jobs[act_id]
 
             if not target_job:
                 return False
 
-            # If queued, remove from queue
-            if target_job.job_id in self.queue:
-                self.queue.remove(target_job.job_id)
-                target_job.status = "stopped"
-                target_job.queue_position = 0
-                target_job.add_log("🛑 งานในคิวถูกยกเลิกแล้วตามคำสั่ง")
-                self._update_queue_positions_locked()
-                return True
+            # Check permissions: user can stop their own job, admin can stop any
+            is_admin = (user.strip().lower() == "admin")
+            is_owner = (target_job.user.strip().lower() == user.strip().lower())
+            if not is_admin and not is_owner:
+                return False
 
-            # If running
-            if target_job.job_id == self.current_job_id:
+            if target_job.status in ["running", "starting"]:
                 target_job.stop_requested = True
                 if target_job.siamchai_crawler:
                     target_job.siamchai_crawler.stop_requested = True
@@ -489,34 +507,6 @@ class JobQueueManager:
                 return True
 
             return False
-
-    def _update_queue_positions_locked(self):
-        for idx, qid in enumerate(self.queue, 1):
-            if qid in self.jobs:
-                self.jobs[qid].queue_position = idx
-
-    def _queue_worker_loop(self):
-        while True:
-            next_job_id = None
-            with self.lock:
-                if self.queue:
-                    next_job_id = self.queue.pop(0)
-                    self.current_job_id = next_job_id
-                    self._update_queue_positions_locked()
-
-            if next_job_id and next_job_id in self.jobs:
-                job = self.jobs[next_job_id]
-                try:
-                    self._execute_job(job)
-                except Exception as e:
-                    job.add_log(f"❌ เกิดข้อผิดพลาดในการประมวลผลงาน: {e}")
-                    with job.lock:
-                        job.status = "error"
-                finally:
-                    with self.lock:
-                        self.current_job_id = None
-            else:
-                time.sleep(1.0)
 
     def _execute_job(self, job: UnifiedJobState):
         cfg = load_config()

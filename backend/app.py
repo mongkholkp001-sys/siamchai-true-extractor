@@ -209,20 +209,22 @@ async def start_crawl(req: StartRequest, user: str = Depends(get_current_user)):
     if not req.cids:
         raise HTTPException(status_code=400, detail="กรุณาระบุเลขค้นหาอย่างน้อย 1 รายการ")
 
-    job = job_manager.submit_job(
-        user=user,
-        cids=req.cids,
-        mode=req.mode,
-        job_name=req.job_name,
-        headless=req.headless
-    )
-    return {
-        "status": "queued" if job.queue_position > 1 else "started",
-        "job_id": job.job_id,
-        "queue_position": job.queue_position,
-        "total": len(req.cids),
-        "mode": req.mode
-    }
+    try:
+        job = job_manager.submit_job(
+            user=user,
+            cids=req.cids,
+            mode=req.mode,
+            job_name=req.job_name,
+            headless=req.headless
+        )
+        return {
+            "status": "started",
+            "job_id": job.job_id,
+            "total": len(req.cids),
+            "mode": req.mode
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/stop")
 async def stop_crawl(job_id: Optional[str] = None, user: str = Depends(get_current_user)):
@@ -353,7 +355,7 @@ async def update_config_endpoint(req: ConfigUpdateRequest, admin: dict = Depends
 
 # ------------------ WebSocket ------------------
 @app.websocket("/ws/status")
-async def websocket_status(websocket: WebSocket, token: Optional[str] = None):
+async def websocket_status(websocket: WebSocket, token: Optional[str] = None, job_id: Optional[str] = None):
     await websocket.accept()
     active_websockets.append(websocket)
     user = "admin"
@@ -364,7 +366,12 @@ async def websocket_status(websocket: WebSocket, token: Optional[str] = None):
             pass
     try:
         while True:
-            job = job_manager.get_user_current_job(user)
+            if job_id:
+                job = job_manager.get_job_by_id(job_id)
+                if not job:
+                    job = job_manager.get_user_current_job(user)
+            else:
+                job = job_manager.get_user_current_job(user)
             data = job.to_dict()
             await websocket.send_json(data)
             await asyncio.sleep(0.7)

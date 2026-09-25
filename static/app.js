@@ -508,25 +508,9 @@ function updateStatusBadge(el, status) {
 }
 
 function updateUI(data) {
-  // Handle Queue Banner
-  const queueBanner = document.getElementById('queue-banner');
-  const queuePosBadge = document.getElementById('queue-position-badge');
-  if (data.status === 'queued') {
-    if (queueBanner) {
-      queueBanner.classList.remove('hidden');
-      if (queuePosBadge) queuePosBadge.textContent = `ลำดับที่ ${data.queue_position || 1}`;
-    }
-    btnStart.disabled = true;
-    btnStart.innerHTML = `<span class="inline-block animate-spin mr-1">⏳</span><span>อยู่ในคิวรอประมวลผล (ลำดับที่ ${data.queue_position || 1})...</span>`;
-    btnStop.disabled = false;
-  } else {
-    if (queueBanner) queueBanner.classList.add('hidden');
-  }
-
   const isBusy = (
     data.status === 'running' ||
     data.status === 'starting' ||
-    data.status === 'queued' ||
     data.sc_status === 'running' ||
     data.sc_status === 'starting' ||
     data.tr_status === 'running' ||
@@ -534,11 +518,11 @@ function updateUI(data) {
   );
   isJobRunning = isBusy;
 
-  if (isBusy && data.status !== 'queued') {
+  if (isBusy) {
     btnStart.disabled = true;
     btnStart.innerHTML = `<span class="inline-block animate-spin mr-1">⏳</span><span>กำลังค้นหาข้อมูล (แยกค้นอิสระ)...</span>`;
     btnStop.disabled = false;
-  } else if (!isBusy) {
+  } else {
     btnStart.disabled = false;
     btnStart.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><span>เริ่มค้นหาข้อมูลทันที (แยกค้นอิสระ)</span>`;
     btnStop.disabled = true;
