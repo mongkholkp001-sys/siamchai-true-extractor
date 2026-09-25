@@ -365,12 +365,26 @@ class TrueCrawler:
                               len(d.find_elements(By.CSS_SELECTOR, 'svg[data-testid="KeyboardArrowDownRoundedIcon"]')) > 0 or
                               len(d.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ')]")) > 0
                 )
-                time.sleep(0.4)
-                self.capture_screen()
+
+                # รอให้ข้อมูลสัญญาหรือลูกศรคลี่ตารางแสดงผลครบถ้วน (ป้องกันการดึงข้อมูลเร็วเกินไปก่อนที่ระบบทรูจะโหลดเสร็จ)
+                wait_data_start = time.time()
+                while time.time() - wait_data_start < 5:
+                    self.handle_popups_and_errors()
+                    has_arrows = len(self.driver.find_elements(By.CSS_SELECTOR, 'svg[data-testid="KeyboardArrowDownRoundedIcon"]')) > 0
+                    has_rows = len(self.driver.find_elements(By.TAG_NAME, "tr")) > 1
+                    try:
+                        body_txt = self.driver.find_element(By.TAG_NAME, "body").text
+                    except Exception:
+                        body_txt = ""
+                    if has_arrows or has_rows or any(k in body_txt for k in ["ไม่พบข้อมูล", "ไม่พบรายการ", "ไม่มีข้อมูล"]):
+                        break
+                    time.sleep(0.3)
+
+                time.sleep(0.5)
 
                 # 5. คลิกลูกศรลงทั้งหมดเพื่อกางตารางเบอร์โทร
                 self.click_all_down_arrows()
-                time.sleep(0.4)
+                time.sleep(0.5)
                 self.capture_screen()
 
                 # 6. กวาดหาเบอร์ Active และเบอร์ทั้งหมด

@@ -356,8 +356,18 @@ def run_unified_process(
 
     # Mark overall job done/stopped
     with unified_job.lock:
-        if unified_job.status != "error":
-            unified_job.status = "stopped" if unified_job.stop_requested else "done"
+        all_selected_errored = (
+            (mode == "both" and unified_job.sc_status == "error" and unified_job.tr_status == "error") or
+            (mode == "siamchai" and unified_job.sc_status == "error") or
+            (mode == "true" and unified_job.tr_status == "error")
+        )
+        if all_selected_errored:
+            unified_job.status = "error"
+            unified_job.add_log("❌ กระบวนการทำงานหยุดลงเนื่องจากเกิดข้อผิดพลาดในการเริ่มต้นระบบ")
+        elif unified_job.stop_requested:
+            unified_job.status = "stopped"
+        else:
+            unified_job.status = "done"
         unified_job.end_time = time.time()
 
     # Create Combined 3-sheet Excel if any results exist

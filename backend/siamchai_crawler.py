@@ -10,6 +10,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.action_chains import ActionChains
 
 LOGIN_URL = "https://secure2021-web.siamchai.net/signin/g_8JBhzikdZcuatJaW2QZoKDfmkPszpY#/"
 INSPECTION_URL = "https://secure2021-web.siamchai.net/#/installment/inspection"
@@ -192,51 +193,34 @@ class SiamchaiCrawler:
             time.sleep(0.3)
         return False
 
-    def fill_login(self, u, p):
-        self.dismiss_popups(1.5)
-        wait = WebDriverWait(self.driver, 15)
+    def perform_login_step(self):
+        self.dismiss_popups(1.0)
+        wait = WebDriverWait(self.driver, 12)
         u_in = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '#user, input#user, input[type="text"]')))
         p_in = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '#pass, input#pass, input[type="password"]')))
 
         u_in.click()
-        u_in.send_keys(Keys.CONTROL, "a")
-        u_in.send_keys(Keys.BACKSPACE)
-        time.sleep(0.05)
-        u_in.send_keys(str(u))
+        u_in.clear()
+        u_in.send_keys(str(self.username))
+        time.sleep(0.15)
 
         p_in.click()
-        p_in.send_keys(Keys.CONTROL, "a")
-        p_in.send_keys(Keys.BACKSPACE)
-        time.sleep(0.05)
-        p_in.send_keys(str(p))
+        p_in.clear()
+        p_in.send_keys(str(self.password))
+        time.sleep(0.2)
+        p_in.send_keys(Keys.ENTER)  # Validates and activates the button in React
+        time.sleep(0.5)
 
-        self.driver.execute_script("""
-            arguments[0].dispatchEvent(new Event('input', {bubbles:true}));
-            arguments[0].dispatchEvent(new Event('change', {bubbles:true}));
-            arguments[1].dispatchEvent(new Event('input', {bubbles:true}));
-            arguments[1].dispatchEvent(new Event('change', {bubbles:true}));
-            arguments[1].blur();
-        """, u_in, p_in)
-        time.sleep(0.3)
-
-    def click_login(self):
-        try:
-            btns = self.driver.find_elements(
-                By.XPATH,
-                '//span[contains(@class,"label") and normalize-space()="เข้าสู่ระบบ"]/ancestor::a[1] | '
-                '//*[self::a or self::button][normalize-space()="เข้าสู่ระบบ"]'
-            )
-            for b in btns:
-                if b.is_displayed():
-                    self.js_click(b)
-                    return True
-        except Exception:
-            pass
-        try:
-            self.driver.switch_to.active_element.send_keys(Keys.ENTER)
-            return True
-        except Exception:
-            return False
+        btns = self.driver.find_elements(
+            By.XPATH,
+            '//span[normalize-space()="เข้าสู่ระบบ"]/ancestor::a[1] | '
+            '//*[self::a or self::button][normalize-space()="เข้าสู่ระบบ"]'
+        )
+        if btns:
+            try:
+                ActionChains(self.driver).move_to_element(btns[0]).click().perform()
+            except Exception:
+                self.js_click(btns[0])
 
     def ensure_inspection_page(self):
         try:
@@ -288,30 +272,27 @@ class SiamchaiCrawler:
         self.log("กำลังเปิดหน้า Login สยามชัย...")
         self.driver.get(LOGIN_URL)
         time.sleep(2)
-        self.capture_screen()
         self.dismiss_popups(timeout=2)
 
-        login_success = False
-        for attempt in range(1, 4):
-            self.log(f"เข้าสู่ระบบสยามชัย (รอบที่ {attempt})...")
-            self.fill_login(self.username, self.password)
-            self.click_login()
-            time.sleep(2.5)
-            self.dismiss_popups(timeout=2)
-            self.capture_screen()
+        # Round 1
+        self.log(f"เข้าสู่ระบบสยามชัยด้วยรหัส {self.username}...")
+        self.perform_login_step()
+        time.sleep(3.5)
 
-            try:
-                txt = self.driver.find_element(By.ID, "user-panel").text.strip()
-                if txt and "กำลังโหลดข้อมูล" not in txt:
-                    self.log(f"✅ สยามชัยเข้าสู่ระบบสำเร็จ: {txt}")
-                    login_success = True
-                    break
-            except Exception:
-                pass
+        # Handle session timeout popup ("ขาดการติดต่อนานเกินไป กรุณาเข้าสู่ระบบใหม่อีกครั้ง")
+        if "signin" not in self.driver.current_url:
+            self.dismiss_popups(timeout=2)
+            time.sleep(1.5)
+
+        # If redirected back to signin (due to previous session invalidation)
+        if "signin" in self.driver.current_url:
+            self.log("กำลังเชื่อมต่อเซสชันสยามชัยรอบที่ 2...")
+            self.perform_login_step()
+            time.sleep(3.5)
 
         self.ensure_inspection_page()
         self.capture_screen()
-        self.log("✅ สยามชัยพร้อมค้นหาข้อมูลแล้ว")
+        self.log("✅ สยามชัยเข้าสู่ระบบและพร้อมค้นหาข้อมูลแล้ว")
 
     def ensure_back_to_search(self):
         try:

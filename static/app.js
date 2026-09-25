@@ -166,7 +166,7 @@ btnStart.addEventListener('click', async () => {
   if (useSc && !useTr) mode = 'siamchai';
   if (!useSc && useTr) mode = 'true';
 
-  const isHeadless = checkHeadless ? checkHeadless.checked : true;
+  const isHeadless = true;
 
   btnStart.disabled = true;
   btnStart.innerHTML = `<span>⏳ กำลังส่งคำสั่งเริ่มค้นหา...</span>`;
@@ -422,16 +422,39 @@ async function pollStatusFallback() {
 }
 setInterval(pollStatusFallback, 1200);
 
+let lastRenderedLogCount = 0;
+function syncServerLogs(logs) {
+  if (!logs || !logs.length) return;
+  if (logs.length === lastRenderedLogCount) return;
+  lastRenderedLogCount = logs.length;
+
+  terminalLogs.innerHTML = '';
+  logs.forEach(msg => {
+    const div = document.createElement('div');
+    div.textContent = msg;
+    if (msg.includes('🟣 [สยามชัย]')) div.className = 'text-indigo-300';
+    else if (msg.includes('🔴 [ทรู]')) div.className = 'text-rose-300';
+    else if (msg.includes('สำเร็จ') || msg.includes('🎉') || msg.includes('💾')) div.className = 'text-emerald-400 font-medium';
+    else if (msg.includes('❌') || msg.includes('ข้อผิดพลาด')) div.className = 'text-rose-400 font-semibold';
+    else if (msg.includes('🚀') || msg.includes('⚡')) div.className = 'text-sky-300 font-semibold';
+    terminalLogs.appendChild(div);
+  });
+  terminalLogs.scrollTop = terminalLogs.scrollHeight;
+}
+
 function updateStatusBadge(el, status) {
   if (!el) return;
   if (status === 'running') {
     el.textContent = 'กำลังค้นหา (RUNNING)';
     el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-sky-500/15 text-sky-400 border border-sky-500/30 animate-pulse';
+  } else if (status === 'starting') {
+    el.textContent = 'กำลังเปิดระบบ... (STARTING)';
+    el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30 animate-pulse';
   } else if (status === 'done') {
     el.textContent = 'เสร็จสิ้น (DONE)';
     el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
   } else if (status === 'error') {
-    el.textContent = 'ข้อผิดพลาด';
+    el.textContent = 'ข้อผิดพลาด (ERROR)';
     el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-rose-500/15 text-rose-400 border border-rose-500/30';
   } else if (status === 'stopped') {
     el.textContent = 'หยุดทำงาน';
@@ -443,11 +466,19 @@ function updateStatusBadge(el, status) {
 }
 
 function updateUI(data) {
-  isJobRunning = (data.status === 'running');
+  const isBusy = (
+    data.status === 'running' ||
+    data.status === 'starting' ||
+    data.sc_status === 'running' ||
+    data.sc_status === 'starting' ||
+    data.tr_status === 'running' ||
+    data.tr_status === 'starting'
+  );
+  isJobRunning = isBusy;
 
-  if (isJobRunning) {
+  if (isBusy) {
     btnStart.disabled = true;
-    btnStart.innerHTML = `<span class="inline-block animate-spin mr-1">⏳</span><span>กำลังค้นหาข้อมูล...</span>`;
+    btnStart.innerHTML = `<span class="inline-block animate-spin mr-1">⏳</span><span>กำลังค้นหาข้อมูล (แยกค้นอิสระ)...</span>`;
     btnStop.disabled = false;
   } else {
     btnStart.disabled = false;
@@ -499,6 +530,11 @@ function updateUI(data) {
   if (data.results && data.results.length !== currentResults.length) {
     currentResults = data.results;
     renderTable();
+  }
+
+  // 5. System Logs Real-time Sync
+  if (data.logs && data.logs.length) {
+    syncServerLogs(data.logs);
   }
 }
 
