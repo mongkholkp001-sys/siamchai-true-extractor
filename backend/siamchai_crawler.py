@@ -50,7 +50,11 @@ class SiamchaiCrawler:
         if self.log_callback:
             self.log_callback(msg)
         else:
-            print(f"[Siamchai] {msg}")
+            try:
+                print(f"[Siamchai] {msg}")
+            except Exception:
+                safe_msg = msg.encode("ascii", errors="replace").decode("ascii")
+                print(f"[Siamchai] {safe_msg}")
 
     def capture_screen(self):
         if not self.driver:
@@ -498,22 +502,7 @@ class SiamchaiCrawler:
                 time.sleep(0.2)
                 continue
 
-            # 1. Check draft popup
-            try:
-                for el in self.driver.find_elements(By.XPATH, '//*[contains(normalize-space(),"ร่างสัญญา")]'):
-                    if el.is_displayed():
-                        txt = el.text.strip()
-                        id_m = re.search(r"เลขที่บัตรประชาชน\s*(\d+)", txt)
-                        nm_m = re.search(r"ชื่อ\s*([^\s]+(?:\s+[^\s]+)*?)\s*ใช่ไหม", txt)
-                        self.last_draft_info = (id_m.group(1) if id_m else "", nm_m.group(1) if nm_m else "")
-                        return "DRAFT"
-            except Exception:
-                pass
-
-            # Close any unwanted dialog
-            self.close_dialog_if_open()
-
-            # 2. Check table rows (Real rows found)
+            # 1. Check table rows FIRST (Real customer rows in database)
             real_rows = []
             try:
                 rows = self.driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
@@ -525,6 +514,33 @@ class SiamchaiCrawler:
                     return "FOUND"
             except Exception:
                 real_rows = []
+
+            # 2. Check draft popup (ONLY in actual visible dialogs, not table headers)
+            try:
+                dialogs = self.driver.find_elements(
+                    By.CSS_SELECTOR,
+                    '.dialog-screen.show, .dialog.show, .k-window, .modal.show, .swal-modal'
+                )
+                for d in dialogs:
+                    if d.is_displayed():
+                        dtxt = d.text.strip()
+                        if "ร่างสัญญา" in dtxt:
+                            id_m = re.search(r"เลขที่บัตรประชาชน\s*[:\s]?\s*(\d{13})", dtxt)
+                            nm_m = re.search(r"ชื่อ\s*[:\s]?\s*([^\n\r]+?)(?:\s*ใช่ไหม|\s*คุณต้องการ|\s*$)", dtxt)
+                            d_id = id_m.group(1) if id_m else ""
+                            d_name = ""
+                            if nm_m:
+                                clean_n = re.sub(r"(?:ใช่ไหม|\?)$", "", nm_m.group(1)).strip()
+                                if len(clean_n) < 60 and "นามสกุล" not in clean_n:
+                                    d_name = clean_n
+                            if d_id or d_name:
+                                self.last_draft_info = (d_id, d_name)
+                                break
+            except Exception:
+                pass
+
+            # Close any unwanted notification dialog
+            self.close_dialog_if_open()
 
             # 3. Check not found message
             not_found_displayed = False
@@ -542,13 +558,15 @@ class SiamchaiCrawler:
                 else:
                     required_wait = 1.5 if (loader_seen or not_found_displayed) else 2.5
                     if (now - empty_since >= required_wait) and (now - start_time >= 1.5):
+                        if self.last_draft_info[1] or self.last_draft_info[0]:
+                            return "DRAFT"
                         return "NOT_FOUND"
             else:
                 empty_since = None
 
-            time.sleep(0.2)
+            time.sleep(0.25)
 
-        if self.last_draft_info[1]:
+        if self.last_draft_info[1] or self.last_draft_info[0]:
             return "DRAFT"
         return "NOT_FOUND"
 
@@ -573,8 +591,14 @@ class SiamchaiCrawler:
     def get_val_at_index(self, elem_id: str, idx: int = 0) -> str:
         try:
             els = self.driver.find_elements(By.ID, elem_id)
+            if not els:
+                els = self.driver.find_elements(By.NAME, elem_id)
+            if not els:
+                els = self.driver.find_elements(By.XPATH, f'//*[@id="{elem_id}" or @name="{elem_id}"]')
             if len(els) > idx:
-                return (els[idx].get_attribute("value") or els[idx].text or "").strip()
+                val = (els[idx].get_attribute("value") or els[idx].text or "").strip()
+                if val:
+                    return val
         except Exception:
             pass
         return ""
