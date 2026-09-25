@@ -58,20 +58,35 @@
         </div>
       </div>
 
-      <div class="flex items-center gap-2 sm:gap-4">
+      <div class="flex items-center gap-2 sm:gap-3">
         <!-- Live status badge -->
         <div id="conn-badge" class="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
           <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span id="conn-text">เชื่อมต่อเซิร์ฟเวอร์แล้ว</span>
+          <span id="conn-text">เชื่อมต่อแล้ว</span>
         </div>
 
-        <!-- User profile & settings -->
+        <!-- History Button -->
+        <button id="btn-job-history" title="ประวัติงานค้นหา" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700/50 transition-colors">
+          <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064" /></svg>
+          <span class="hidden sm:inline">ประวัติงาน</span>
+        </button>
+
+        <!-- User Management Button (Admin only) -->
+        <button id="btn-users-mgmt" title="จัดการบัญชีผู้ใช้งาน" class="hidden flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-xs font-medium border border-indigo-500/40 transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+          <span class="hidden sm:inline">จัดการผู้ใช้</span>
+        </button>
+
+        <!-- System Settings (Admin only) -->
         <button id="btn-settings" title="ตั้งค่าระบบ / บัญชี" class="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 transition-colors border border-slate-700/50">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
         </button>
 
         <div class="flex items-center gap-2 pl-2 border-l border-slate-800">
-          <span id="user-display" class="text-xs text-slate-300 font-medium">admin</span>
+          <div class="text-right">
+            <span id="user-display" class="text-xs text-slate-200 font-semibold block">admin</span>
+            <span id="role-badge" class="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Admin</span>
+          </div>
           <button id="btn-logout" title="ออกจากระบบ" class="p-2 rounded-xl text-rose-400 hover:bg-rose-500/10 transition-colors">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
           </button>
@@ -82,6 +97,25 @@
 
   <!-- Main Container -->
   <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Queue Notification Banner -->
+    <div id="queue-banner" class="hidden glass-panel rounded-2xl p-4 border border-amber-500/40 bg-amber-500/10 text-amber-200 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg shadow-amber-500/10 animate-pulse">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+          <svg class="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-bold text-sm text-white">งานค้นหาของคุณกำลังรอในคิว</span>
+            <span id="queue-position-badge" class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-slate-950">ลำดับที่ 1</span>
+          </div>
+          <p class="text-xs text-amber-300/80">ระบบกำลังดำเนินงานค้นหาก่อนหน้าอยู่ เมื่อเสร็จสิ้นจะเริ่มค้นหาของคุณให้อัตโนมัติทันที</p>
+        </div>
+      </div>
+      <button id="btn-cancel-queue" class="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 transition-all shrink-0">
+        ❌ ยกเลิกคิวนี้
+      </button>
+    </div>
 
     <!-- Top Card: Input & Control Panel -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -360,6 +394,121 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=20260925_ROCK_SOLID"></script>
+  <!-- User Management Modal (Admin Only) -->
+  <div id="modal-users" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="glass-panel rounded-2xl max-w-2xl w-full p-6 space-y-5 border border-slate-700 shadow-2xl max-h-[90vh] flex flex-col">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="text-base font-bold text-white flex items-center gap-2">
+          👥 จัดการบัญชีผู้ใช้งานระบบ (User Management)
+        </h3>
+        <button id="btn-close-users" class="text-slate-400 hover:text-white text-lg">&times;</button>
+      </div>
+
+      <!-- Add New User Form -->
+      <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+        <span class="font-semibold text-indigo-400 block text-xs">➕ เพิ่มบัญชีผู้ใช้งานใหม่</span>
+        <div class="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+          <div>
+            <label class="block text-slate-400 mb-1">Username *</label>
+            <input type="text" id="new-user-name" placeholder="เช่น staff1" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white">
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">Password *</label>
+            <input type="password" id="new-user-pass" placeholder="รหัสผ่าน" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white">
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">ชื่อ-นามสกุล / แผนก</label>
+            <input type="text" id="new-user-fullname" placeholder="เช่น สมชาย (ทีมคัด)" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white">
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">สิทธิ์ (Role)</label>
+            <select id="new-user-role" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white">
+              <option value="member">พนักงาน (Member)</option>
+              <option value="admin">ผู้ดูแลระบบ (Admin)</option>
+            </select>
+          </div>
+        </div>
+        <div class="flex justify-end">
+          <button id="btn-create-user" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center gap-1.5">
+            <span>บันทึกเพิ่มผู้ใช้</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Users List Table -->
+      <div class="flex-1 overflow-hidden flex flex-col space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold text-slate-300">📋 รายชื่อผู้ใช้ทั้งหมดในระบบ</span>
+          <button id="btn-refresh-users" class="text-xs text-sky-400 hover:underline">🔄 รีเฟรช</button>
+        </div>
+        <div class="overflow-y-auto scrollbar-thin border border-slate-800 rounded-xl bg-slate-950/60 max-h-[260px]">
+          <table class="w-full text-left text-xs text-slate-300 whitespace-nowrap">
+            <thead class="bg-slate-900/90 text-slate-400 sticky top-0 border-b border-slate-800">
+              <tr>
+                <th class="p-2.5">ชื่อผู้ใช้ (Username)</th>
+                <th class="p-2.5">ชื่อแสดงผล</th>
+                <th class="p-2.5">ระดับสิทธิ์</th>
+                <th class="p-2.5 text-right">การจัดการ</th>
+              </tr>
+            </thead>
+            <tbody id="users-table-body" class="divide-y divide-slate-800/60">
+              <tr>
+                <td colspan="4" class="p-4 text-center text-slate-500">กำลังโหลดข้อมูลผู้ใช้...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end border-t border-slate-800 pt-3">
+        <button id="btn-done-users" class="px-4 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white bg-slate-800">ปิดหน้าต่าง</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Job History Modal -->
+  <div id="modal-history" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="glass-panel rounded-2xl max-w-4xl w-full p-6 space-y-4 border border-slate-700 shadow-2xl max-h-[90vh] flex flex-col">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-2">
+          <h3 class="text-base font-bold text-white flex items-center gap-2">
+            📜 ประวัติงานค้นหาและไฟล์ดาวน์โหลด (Job History)
+          </h3>
+          <span class="text-[11px] text-slate-400">เก็บประวัติงานเพื่อย้อนดูและดาวน์โหลดไฟล์ซ้ำได้ตลอดเวลา</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btn-refresh-history" class="p-1.5 text-xs text-slate-400 hover:text-white rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700/50">🔄 รีเฟรช</button>
+          <button id="btn-close-history" class="text-slate-400 hover:text-white text-lg">&times;</button>
+        </div>
+      </div>
+
+      <!-- History Table -->
+      <div class="flex-1 overflow-y-auto scrollbar-thin border border-slate-800 rounded-xl bg-slate-950/60 max-h-[460px]">
+        <table class="w-full text-left text-xs text-slate-300 whitespace-nowrap">
+          <thead class="bg-slate-900/90 text-slate-400 sticky top-0 border-b border-slate-800">
+            <tr>
+              <th class="p-2.5">วัน/เวลาที่สร้าง</th>
+              <th class="p-2.5">ผู้สั่งค้นหา</th>
+              <th class="p-2.5">จำนวน</th>
+              <th class="p-2.5">โหมด</th>
+              <th class="p-2.5">สถานะ</th>
+              <th class="p-2.5 text-center">ดาวน์โหลดไฟล์ Excel</th>
+            </tr>
+          </thead>
+          <tbody id="history-table-body" class="divide-y divide-slate-800/60 font-sans">
+            <tr>
+              <td colspan="6" class="p-6 text-center text-slate-500">กำลังโหลดประวัติงาน...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="flex items-center justify-end border-t border-slate-800 pt-3">
+        <button id="btn-done-history" class="px-4 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white bg-slate-800">ปิดหน้าต่าง</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=20260925_MULTIUSER"></script>
 </body>
 </html>

@@ -10,9 +10,48 @@ let screenInterval = null;
 // Auth Check
 const authToken = localStorage.getItem('auth_token') || '';
 const authUser = localStorage.getItem('auth_user') || 'admin';
+let currentUserRole = 'member';
+
 if (document.getElementById('user-display')) {
   document.getElementById('user-display').textContent = authUser;
 }
+
+async function initCurrentUser() {
+  try {
+    const res = await fetch('/api/auth/me', {
+      headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+      credentials: 'same-origin'
+    });
+    if (res.ok) {
+      const data = await res.json();
+      currentUserRole = data.role || 'member';
+      const uDisp = document.getElementById('user-display');
+      const rBadge = document.getElementById('role-badge');
+      if (uDisp) uDisp.textContent = data.name || data.username || authUser;
+      if (rBadge) {
+        rBadge.textContent = currentUserRole === 'admin' ? 'Admin' : 'พนักงาน';
+        rBadge.className = currentUserRole === 'admin'
+          ? 'text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+          : 'text-[9px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30';
+      }
+
+      // Show/Hide admin buttons
+      const btnUsersMgmt = document.getElementById('btn-users-mgmt');
+      const btnSettings = document.getElementById('btn-settings');
+      if (btnUsersMgmt) {
+        if (currentUserRole === 'admin') btnUsersMgmt.classList.remove('hidden');
+        else btnUsersMgmt.classList.add('hidden');
+      }
+      if (btnSettings) {
+        if (currentUserRole === 'admin') btnSettings.classList.remove('hidden');
+        else btnSettings.classList.add('hidden');
+      }
+    }
+  } catch (err) {
+    console.error('Failed to init user info:', err);
+  }
+}
+initCurrentUser();
 
 // Elements - Inputs & Controls
 const dropZone = document.getElementById('drop-zone');
@@ -370,11 +409,12 @@ document.getElementById('btn-clear-logs').addEventListener('click', () => {
 let ws = null;
 function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${protocol}//${window.location.host}/ws/status`);
+  const wsUrl = `${protocol}//${window.location.host}/ws/status?token=${encodeURIComponent(authToken)}`;
+  ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
     document.getElementById('conn-badge').className = 'flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-    document.getElementById('conn-text').textContent = 'เชื่อมต่อเซิร์ฟเวอร์แล้ว';
+    document.getElementById('conn-text').textContent = 'เชื่อมต่อแล้ว';
   };
 
   ws.onmessage = (event) => {
@@ -408,10 +448,9 @@ async function pollStatusFallback() {
     if (res.ok) {
       const data = await res.json();
       updateUI(data);
-      // If websocket was down, still show connected via HTTP
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         document.getElementById('conn-badge').className = 'flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-        document.getElementById('conn-text').textContent = 'เชื่อมต่อเซิร์ฟเวอร์ (HTTP Live)';
+        document.getElementById('conn-text').textContent = 'เชื่อมต่อแล้ว (Live)';
       }
     }
   } catch (e) {
@@ -450,6 +489,9 @@ function updateStatusBadge(el, status) {
   } else if (status === 'starting') {
     el.textContent = 'กำลังเปิดระบบ... (STARTING)';
     el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30 animate-pulse';
+  } else if (status === 'queued') {
+    el.textContent = 'ในคิว (QUEUED)';
+    el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30';
   } else if (status === 'done') {
     el.textContent = 'เสร็จสิ้น (DONE)';
     el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
@@ -466,9 +508,25 @@ function updateStatusBadge(el, status) {
 }
 
 function updateUI(data) {
+  // Handle Queue Banner
+  const queueBanner = document.getElementById('queue-banner');
+  const queuePosBadge = document.getElementById('queue-position-badge');
+  if (data.status === 'queued') {
+    if (queueBanner) {
+      queueBanner.classList.remove('hidden');
+      if (queuePosBadge) queuePosBadge.textContent = `ลำดับที่ ${data.queue_position || 1}`;
+    }
+    btnStart.disabled = true;
+    btnStart.innerHTML = `<span class="inline-block animate-spin mr-1">⏳</span><span>อยู่ในคิวรอประมวลผล (ลำดับที่ ${data.queue_position || 1})...</span>`;
+    btnStop.disabled = false;
+  } else {
+    if (queueBanner) queueBanner.classList.add('hidden');
+  }
+
   const isBusy = (
     data.status === 'running' ||
     data.status === 'starting' ||
+    data.status === 'queued' ||
     data.sc_status === 'running' ||
     data.sc_status === 'starting' ||
     data.tr_status === 'running' ||
@@ -476,11 +534,11 @@ function updateUI(data) {
   );
   isJobRunning = isBusy;
 
-  if (isBusy) {
+  if (isBusy && data.status !== 'queued') {
     btnStart.disabled = true;
     btnStart.innerHTML = `<span class="inline-block animate-spin mr-1">⏳</span><span>กำลังค้นหาข้อมูล (แยกค้นอิสระ)...</span>`;
     btnStop.disabled = false;
-  } else {
+  } else if (!isBusy) {
     btnStart.disabled = false;
     btnStart.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><span>เริ่มค้นหาข้อมูลทันที (แยกค้นอิสระ)</span>`;
     btnStop.disabled = true;
@@ -495,9 +553,11 @@ function updateUI(data) {
   const scFound = data.sc_found_count !== undefined ? data.sc_found_count : (data.sc_count || 0);
   scCountFound.textContent = `พบข้อมูลสัญญา: ${scFound} รายการ (ค้นแล้ว ${data.sc_count || 0})`;
 
+  const jobIdParam = data.job_id ? `&job_id=${encodeURIComponent(data.job_id)}` : '';
+
   if (data.has_sc_excel) {
     btnDownloadSc.classList.remove('hidden');
-    btnDownloadSc.href = `/api/download/siamchai?token=${authToken}`;
+    btnDownloadSc.href = `/api/download/siamchai?token=${authToken}${jobIdParam}`;
   } else {
     btnDownloadSc.classList.add('hidden');
   }
@@ -513,7 +573,7 @@ function updateUI(data) {
 
   if (data.has_tr_excel) {
     btnDownloadTr.classList.remove('hidden');
-    btnDownloadTr.href = `/api/download/true?token=${authToken}`;
+    btnDownloadTr.href = `/api/download/true?token=${authToken}${jobIdParam}`;
   } else {
     btnDownloadTr.classList.add('hidden');
   }
@@ -521,7 +581,7 @@ function updateUI(data) {
   // 3. Combined Download Button Update
   if (data.has_combined_excel || data.has_excel) {
     btnDownloadCombined.classList.remove('hidden');
-    btnDownloadCombined.href = `/api/download/combined?token=${authToken}`;
+    btnDownloadCombined.href = `/api/download/combined?token=${authToken}${jobIdParam}`;
   } else {
     btnDownloadCombined.classList.add('hidden');
   }
@@ -540,6 +600,23 @@ function updateUI(data) {
 
 connectWebSocket();
 
+// Cancel Queue button
+const btnCancelQueue = document.getElementById('btn-cancel-queue');
+if (btnCancelQueue) {
+  btnCancelQueue.addEventListener('click', async () => {
+    if (confirm('คุณต้องการยกเลิกงานค้นหานี้ออกจากคิวใช่หรือไม่?')) {
+      try {
+        await fetch('/api/stop', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  });
+}
+
 // ------------------ Settings Modal ------------------
 const modalSettings = document.getElementById('modal-settings');
 const btnSettings = document.getElementById('btn-settings');
@@ -547,54 +624,299 @@ const btnCloseSettings = document.getElementById('btn-close-settings');
 const btnCancelSettings = document.getElementById('btn-cancel-settings');
 const btnSaveSettings = document.getElementById('btn-save-settings');
 
-btnSettings.addEventListener('click', async () => {
-  modalSettings.classList.remove('hidden');
-  try {
-    const res = await fetch('/api/config', {
-      headers: { 'Authorization': `Bearer ${authToken}` }
-    });
-    const cfg = await res.json();
-    document.getElementById('cfg-web-user').value = cfg.web_username || '';
-    document.getElementById('cfg-sc-user').value = cfg.siamchai_username || '';
-    document.getElementById('cfg-tr-user').value = cfg.true_username || '';
-  } catch (err) {
-    console.error(err);
-  }
-});
+if (btnSettings) {
+  btnSettings.addEventListener('click', async () => {
+    modalSettings.classList.remove('hidden');
+    try {
+      const res = await fetch('/api/config', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      const cfg = await res.json();
+      document.getElementById('cfg-web-user').value = cfg.web_username || '';
+      document.getElementById('cfg-sc-user').value = cfg.siamchai_username || '';
+      document.getElementById('cfg-tr-user').value = cfg.true_username || '';
+    } catch (err) {
+      console.error(err);
+    }
+  });
+}
 
 const closeModal = () => modalSettings.classList.add('hidden');
-btnCloseSettings.addEventListener('click', closeModal);
-btnCancelSettings.addEventListener('click', closeModal);
+if (btnCloseSettings) btnCloseSettings.addEventListener('click', closeModal);
+if (btnCancelSettings) btnCancelSettings.addEventListener('click', closeModal);
 
-btnSaveSettings.addEventListener('click', async () => {
-  const body = {
-    web_username: document.getElementById('cfg-web-user').value.trim(),
-    web_password: document.getElementById('cfg-web-pass').value.trim() || undefined,
-    siamchai_username: document.getElementById('cfg-sc-user').value.trim(),
-    siamchai_password: document.getElementById('cfg-sc-pass').value.trim() || undefined,
-    true_username: document.getElementById('cfg-tr-user').value.trim(),
-    true_password: document.getElementById('cfg-tr-pass').value.trim() || undefined,
-  };
+if (btnSaveSettings) {
+  btnSaveSettings.addEventListener('click', async () => {
+    const body = {
+      web_username: document.getElementById('cfg-web-user').value.trim(),
+      web_password: document.getElementById('cfg-web-pass').value.trim() || undefined,
+      siamchai_username: document.getElementById('cfg-sc-user').value.trim(),
+      siamchai_password: document.getElementById('cfg-sc-pass').value.trim() || undefined,
+      true_username: document.getElementById('cfg-tr-user').value.trim(),
+      true_password: document.getElementById('cfg-tr-pass').value.trim() || undefined,
+    };
 
-  try {
-    const res = await fetch('/api/config', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      },
-      body: JSON.stringify(body)
-    });
-    if (res.ok) {
-      alert('บันทึกการตั้งค่าเรียบร้อยแล้ว');
-      closeModal();
-    } else {
-      alert('ไม่สามารถบันทึกการตั้งค่าได้');
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify(body)
+      });
+      if (res.ok) {
+        alert('บันทึกการตั้งค่าเรียบร้อยแล้ว');
+        closeModal();
+      } else {
+        alert('ไม่สามารถบันทึกการตั้งค่าได้');
+      }
+    } catch (err) {
+      alert('เกิดข้อผิดพลาด: ' + err.message);
     }
+  });
+}
+
+// ------------------ User Management Modal (Admin) ------------------
+const modalUsers = document.getElementById('modal-users');
+const btnUsersMgmt = document.getElementById('btn-users-mgmt');
+const btnCloseUsers = document.getElementById('btn-close-users');
+const btnDoneUsers = document.getElementById('btn-done-users');
+const btnRefreshUsers = document.getElementById('btn-refresh-users');
+const btnCreateUser = document.getElementById('btn-create-user');
+const usersTableBody = document.getElementById('users-table-body');
+
+async function loadUsersList() {
+  if (!usersTableBody) return;
+  usersTableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-500">กำลังโหลดข้อมูลผู้ใช้...</td></tr>`;
+  try {
+    const res = await fetch('/api/users', {
+      headers: { 'Authorization': `Bearer ${authToken}` },
+      credentials: 'same-origin'
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      usersTableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-400 font-semibold">${err.detail || 'ไม่สามารถโหลดรายชื่อผู้ใช้ได้'}</td></tr>`;
+      return;
+    }
+    const data = await res.json();
+    const users = data.users || [];
+    if (!users.length) {
+      usersTableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-500">ไม่พบข้อมูลผู้ใช้</td></tr>`;
+      return;
+    }
+    usersTableBody.innerHTML = '';
+    users.forEach(u => {
+      const tr = document.createElement('tr');
+      tr.className = 'hover:bg-slate-900/50 transition-colors';
+      const isCurrent = u.username.toLowerCase() === authUser.toLowerCase();
+      const roleBadge = u.role === 'admin'
+        ? `<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Admin</span>`
+        : `<span class="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-slate-300 border border-slate-700">Member</span>`;
+
+      tr.innerHTML = `
+        <td class="p-2.5 font-mono text-white font-medium">${u.username}</td>
+        <td class="p-2.5 text-slate-300">${u.name || '-'}</td>
+        <td class="p-2.5">${roleBadge}</td>
+        <td class="p-2.5 text-right space-x-1.5">
+          <button class="btn-user-reset px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs border border-slate-700" data-user="${u.username}">🔑 รีเซ็ตรหัส</button>
+          ${!isCurrent ? `<button class="btn-user-del px-2.5 py-1 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 text-xs border border-rose-500/30" data-user="${u.username}">🗑️ ลบ</button>` : `<span class="text-[11px] text-slate-500 italic pl-1">(บัญชีนี้)</span>`}
+        </td>
+      `;
+      usersTableBody.appendChild(tr);
+    });
+
+    document.querySelectorAll('.btn-user-reset').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const u = e.currentTarget.getAttribute('data-user');
+        const newPass = prompt(`ระบุรหัสผ่านใหม่สำหรับผู้ใช้ "${u}":`);
+        if (!newPass || !newPass.trim()) return;
+        try {
+          const r = await fetch(`/api/users/${encodeURIComponent(u)}/password`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({ password: newPass.trim() })
+          });
+          const resData = await r.json();
+          if (r.ok) {
+            alert(`✅ เปลี่ยนรหัสผ่านสำหรับ ${u} เรียบร้อยแล้ว`);
+          } else {
+            alert(`❌ เกิดข้อผิดพลาด: ${resData.detail || 'ไม่สามารถเปลี่ยนรหัสได้'}`);
+          }
+        } catch (err) {
+          alert('เกิดข้อผิดพลาด: ' + err.message);
+        }
+      });
+    });
+
+    document.querySelectorAll('.btn-user-del').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const u = e.currentTarget.getAttribute('data-user');
+        if (!confirm(`ต้องการลบบัญชีผู้ใช้ "${u}" ใช่หรือไม่?`)) return;
+        try {
+          const r = await fetch(`/api/users/${encodeURIComponent(u)}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${authToken}` }
+          });
+          const resData = await r.json();
+          if (r.ok) {
+            alert(`✅ ลบผู้ใช้ ${u} เรียบร้อย`);
+            loadUsersList();
+          } else {
+            alert(`❌ เกิดข้อผิดพลาด: ${resData.detail || 'ไม่สามารถลบได้'}`);
+          }
+        } catch (err) {
+          alert('เกิดข้อผิดพลาด: ' + err.message);
+        }
+      });
+    });
+
   } catch (err) {
-    alert('เกิดข้อผิดพลาด: ' + err.message);
+    usersTableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-400">เกิดข้อผิดพลาด: ${err.message}</td></tr>`;
   }
-});
+}
+
+if (btnUsersMgmt) {
+  btnUsersMgmt.addEventListener('click', () => {
+    if (modalUsers) {
+      modalUsers.classList.remove('hidden');
+      loadUsersList();
+    }
+  });
+}
+
+if (btnCloseUsers) btnCloseUsers.addEventListener('click', () => modalUsers.classList.add('hidden'));
+if (btnDoneUsers) btnDoneUsers.addEventListener('click', () => modalUsers.classList.add('hidden'));
+if (btnRefreshUsers) btnRefreshUsers.addEventListener('click', loadUsersList);
+
+if (btnCreateUser) {
+  btnCreateUser.addEventListener('click', async () => {
+    const uname = document.getElementById('new-user-name').value.trim();
+    const upass = document.getElementById('new-user-pass').value.trim();
+    const ufullname = document.getElementById('new-user-fullname').value.trim();
+    const urole = document.getElementById('new-user-role').value;
+
+    if (!uname || !upass) {
+      alert('กรุณากรอก Username และ Password');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          username: uname,
+          password: upass,
+          name: ufullname,
+          role: urole
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`✅ สร้างผู้ใช้งาน "${uname}" เรียบร้อยแล้ว`);
+        document.getElementById('new-user-name').value = '';
+        document.getElementById('new-user-pass').value = '';
+        document.getElementById('new-user-fullname').value = '';
+        loadUsersList();
+      } else {
+        alert(`❌ ไม่สามารถสร้างผู้ใช้ได้: ${data.detail || 'เกิดข้อผิดพลาด'}`);
+      }
+    } catch (err) {
+      alert('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  });
+}
+
+// ------------------ Job History Modal ------------------
+const modalHistory = document.getElementById('modal-history');
+const btnJobHistory = document.getElementById('btn-job-history');
+const btnCloseHistory = document.getElementById('btn-close-history');
+const btnDoneHistory = document.getElementById('btn-done-history');
+const btnRefreshHistory = document.getElementById('btn-refresh-history');
+const historyTableBody = document.getElementById('history-table-body');
+
+async function loadHistoryList() {
+  if (!historyTableBody) return;
+  historyTableBody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-500">กำลังโหลดประวัติงาน...</td></tr>`;
+  try {
+    const res = await fetch('/api/jobs', {
+      headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+      credentials: 'same-origin'
+    });
+    if (!res.ok) {
+      historyTableBody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-rose-400">ไม่สามารถโหลดประวัติงานได้</td></tr>`;
+      return;
+    }
+    const data = await res.json();
+    const jobs = data.jobs || [];
+    if (!jobs.length) {
+      historyTableBody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-500">ยังไม่มีประวัติงานค้นหา</td></tr>`;
+      return;
+    }
+    historyTableBody.innerHTML = '';
+    jobs.forEach(j => {
+      const tr = document.createElement('tr');
+      tr.className = 'hover:bg-slate-900/50 transition-colors';
+
+      let statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">ว่าง (IDLE)</span>';
+      if (j.status === 'done') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">เสร็จสิ้น</span>';
+      else if (j.status === 'running') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-sky-500/20 text-sky-400 border border-sky-500/30 animate-pulse">กำลังค้นหา</span>';
+      else if (j.status === 'queued') statusBadge = `<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">ในคิว (${j.queue_position})</span>`;
+      else if (j.status === 'stopped') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] bg-amber-500/20 text-amber-400">หยุดแล้ว</span>';
+      else if (j.status === 'error') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30">ข้อผิดพลาด</span>';
+
+      let modeLabel = 'สยามชัย & ทรู';
+      if (j.mode === 'siamchai') modeLabel = 'สยามชัย';
+      else if (j.mode === 'true') modeLabel = 'ทรู';
+
+      let dlBtns = [];
+      if (j.has_combined_excel) {
+        dlBtns.push(`<a href="/api/download/combined?job_id=${encodeURIComponent(j.job_id)}&token=${authToken}" target="_blank" class="px-2.5 py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-semibold border border-emerald-500/40">📊 Excel รวม</a>`);
+      }
+      if (j.has_sc_excel) {
+        dlBtns.push(`<a href="/api/download/siamchai?job_id=${encodeURIComponent(j.job_id)}&token=${authToken}" target="_blank" class="px-2 py-1 rounded bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-xs border border-indigo-500/40">🟣 สยามชัย</a>`);
+      }
+      if (j.has_tr_excel) {
+        dlBtns.push(`<a href="/api/download/true?job_id=${encodeURIComponent(j.job_id)}&token=${authToken}" target="_blank" class="px-2 py-1 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs border border-rose-500/40">🔴 ทรู</a>`);
+      }
+      if (!dlBtns.length) {
+        dlBtns.push(`<span class="text-slate-600 text-xs">-</span>`);
+      }
+
+      tr.innerHTML = `
+        <td class="p-2.5 text-slate-300 font-mono text-[11px]">${j.created_time_str || '-'}</td>
+        <td class="p-2.5 text-white font-medium">${j.user}</td>
+        <td class="p-2.5 font-mono text-slate-300">${j.total || 0} รายการ</td>
+        <td class="p-2.5 text-slate-300">${modeLabel}</td>
+        <td class="p-2.5">${statusBadge}</td>
+        <td class="p-2.5 text-center space-x-1.5">${dlBtns.join('')}</td>
+      `;
+      historyTableBody.appendChild(tr);
+    });
+  } catch (err) {
+    historyTableBody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-rose-400">เกิดข้อผิดพลาด: ${err.message}</td></tr>`;
+  }
+}
+
+if (btnJobHistory) {
+  btnJobHistory.addEventListener('click', () => {
+    if (modalHistory) {
+      modalHistory.classList.remove('hidden');
+      loadHistoryList();
+    }
+  });
+}
+
+if (btnCloseHistory) btnCloseHistory.addEventListener('click', () => modalHistory.classList.add('hidden'));
+if (btnDoneHistory) btnDoneHistory.addEventListener('click', () => modalHistory.classList.add('hidden'));
+if (btnRefreshHistory) btnRefreshHistory.addEventListener('click', loadHistoryList);
 
 // ------------------ Logout ------------------
 document.getElementById('btn-logout').addEventListener('click', async () => {

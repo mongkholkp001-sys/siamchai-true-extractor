@@ -114,12 +114,15 @@ class TrueCrawler:
             "--disable-blink-features=AutomationControlled",
             "--blink-settings=imagesEnabled=false",
             "--disable-extensions",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-features=IsolateOrigins,site-per-process",
         ]
         if os.name != "nt":
             args.extend(["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
 
         if self.headless or os.name != "nt":
-            args.extend(["--headless=new", "--disable-gpu"])
+            args.extend(["--headless=new"])
 
         options = webdriver.ChromeOptions()
         if browser_path:

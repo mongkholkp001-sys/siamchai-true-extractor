@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -9,6 +10,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -62,6 +64,92 @@ def save_config(cfg):
         return True
     except Exception:
         return False
+
+# ------------------ Multi-User Storage ------------------
+def load_users():
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list) and len(data) > 0:
+                    return data
+        except Exception:
+            pass
+
+    # If users.json doesn't exist, initialize with default admin
+    cfg = load_config()
+    default_admin = {
+        "username": cfg.get("web_username", "admin").strip(),
+        "password": cfg.get("web_password", "password123").strip(),
+        "role": "admin",
+        "name": "ผู้ดูแลระบบ (Admin)",
+        "created_at": int(time.time())
+    }
+    save_users([default_admin])
+    return [default_admin]
+
+def save_users(users_list):
+    try:
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(users_list, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+def get_user(username: str):
+    users = load_users()
+    for u in users:
+        if u.get("username", "").strip().lower() == username.strip().lower():
+            return u
+    return None
+
+def add_user(username: str, password: str, role: str = "member", name: str = ""):
+    users = load_users()
+    clean_u = username.strip()
+    if not clean_u:
+        raise ValueError("ชื่อผู้ใช้ต้องไม่ว่างเปล่า")
+    if get_user(clean_u):
+        raise ValueError(f"ชื่อผู้ใช้ '{clean_u}' มีอยู่ในระบบแล้ว")
+    
+    new_user = {
+        "username": clean_u,
+        "password": password.strip(),
+        "role": role if role in ["admin", "member"] else "member",
+        "name": name.strip() or clean_u,
+        "created_at": int(time.time())
+    }
+    users.append(new_user)
+    save_users(users)
+    return new_user
+
+def update_user_password(username: str, new_password: str):
+    users = load_users()
+    clean_u = username.strip().lower()
+    found = False
+    for u in users:
+        if u.get("username", "").strip().lower() == clean_u:
+            u["password"] = new_password.strip()
+            found = True
+            break
+    if not found:
+        raise ValueError(f"ไม่พบผู้ใช้ '{username}'")
+    save_users(users)
+    return True
+
+def delete_user(username: str, current_admin: str):
+    clean_u = username.strip().lower()
+    if clean_u == current_admin.strip().lower():
+        raise ValueError("ไม่สามารถลบบัญชีตัวเองที่กำลังใช้งานอยู่ได้")
+    users = load_users()
+    admin_count = sum(1 for u in users if u.get("role") == "admin" and u.get("username", "").strip().lower() != clean_u)
+    if admin_count < 1:
+        raise ValueError("ไม่สามารถลบได้ เนื่องจากต้องมี Admin อย่างน้อย 1 บัญชีในระบบ")
+
+    new_users = [u for u in users if u.get("username", "").strip().lower() != clean_u]
+    if len(new_users) == len(users):
+        raise ValueError(f"ไม่พบผู้ใช้ '{username}'")
+    save_users(new_users)
+    return True
 
 def parse_cids_from_text(text: str):
     """Extract 13-digit Thai national IDs or numbers from text"""

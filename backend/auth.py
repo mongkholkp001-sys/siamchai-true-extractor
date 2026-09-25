@@ -73,8 +73,40 @@ async def get_current_user(
 
     raise HTTPException(status_code=401, detail="Not authenticated")
 
-def authenticate_user(username, password) -> bool:
+def authenticate_user(username: str, password: str) -> bool:
+    from backend.storage import get_user, load_config
+    clean_u = (username or "").strip()
+    clean_p = (password or "").strip()
+    if not clean_u or not clean_p:
+        return False
+
+    u = get_user(clean_u)
+    if u:
+        expected_p = str(u.get("password", "")).strip()
+        return secrets.compare_digest(clean_p, expected_p)
+
+    # Fallback to config default
     cfg = load_config()
     valid_u = cfg.get("web_username", "admin").strip()
     valid_p = cfg.get("web_password", "password123").strip()
-    return secrets.compare_digest(username.strip(), valid_u) and secrets.compare_digest(password.strip(), valid_p)
+    return secrets.compare_digest(clean_u, valid_u) and secrets.compare_digest(clean_p, valid_p)
+
+def get_current_user_info(username: str = Depends(get_current_user)) -> dict:
+    from backend.storage import get_user
+    u = get_user(username)
+    if u:
+        return {
+            "username": u["username"],
+            "role": u.get("role", "member"),
+            "name": u.get("name", u["username"])
+        }
+    return {
+        "username": username,
+        "role": "admin" if username.lower() == "admin" else "member",
+        "name": username
+    }
+
+def require_admin(user_info: dict = Depends(get_current_user_info)) -> dict:
+    if user_info.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="ต้องใช้สิทธิ์ Admin ในการดำเนินการ")
+    return user_info

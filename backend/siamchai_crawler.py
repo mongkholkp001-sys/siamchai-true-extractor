@@ -96,6 +96,19 @@ class SiamchaiCrawler:
         return "chrome", None
 
     def create_driver(self):
+        if self.driver:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
+            self.driver = None
+        if self.profile_dir and os.path.exists(self.profile_dir):
+            try:
+                shutil.rmtree(self.profile_dir, ignore_errors=True)
+            except Exception:
+                pass
+            self.profile_dir = None
+
         engine, browser_path = self.find_browser()
         self.profile_dir = tempfile.mkdtemp(prefix="siamchai_hub_profile_")
 
@@ -111,12 +124,15 @@ class SiamchaiCrawler:
             "--disable-blink-features=AutomationControlled",
             "--blink-settings=imagesEnabled=false",
             "--disable-extensions",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-features=IsolateOrigins,site-per-process",
         ]
         if os.name != "nt":
             args.extend(["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
 
         if self.headless or os.name != "nt":
-            args.extend(["--headless=new", "--disable-gpu"])
+            args.extend(["--headless=new"])
 
         if engine == "edge":
             options = webdriver.EdgeOptions()
@@ -141,6 +157,111 @@ class SiamchaiCrawler:
 
         self.driver.set_page_load_timeout(45)
         self.driver.implicitly_wait(2)
+
+    def is_loading_overlay_active(self) -> bool:
+        if not self.driver:
+            return False
+        loader_selectors = [
+            ".k-loading-mask",
+            ".k-loading-image",
+            ".k-loading-color",
+            ".loading-spinner",
+            ".spinner-border",
+            ".blockOverlay",
+            "div.loading",
+            "div.spinner",
+            "#loading-img",
+            "#loading-spinner",
+        ]
+        for sel in loader_selectors:
+            try:
+                for el in self.driver.find_elements(By.CSS_SELECTOR, sel):
+                    if el.is_displayed():
+                        sz = el.size
+                        if sz.get("width", 0) > 8 and sz.get("height", 0) > 8:
+                            return True
+            except Exception:
+                pass
+        return False
+
+    def recover_driver_session(self):
+        self.log("🔄 กำลังรีสตาร์ทเบราว์เซอร์สยามชัยและเชื่อมต่อระบบใหม่อัตโนมัติ...")
+        self.close()
+        time.sleep(2)
+        self.login_and_prepare()
+
+    def recover_session_if_needed(self) -> bool:
+        if not self.driver:
+            self.recover_driver_session()
+            return True
+        try:
+            _ = self.driver.current_url
+        except Exception:
+            self.recover_driver_session()
+            return True
+
+        # 1) Check for session timeout popup
+        timeout_detected = False
+        try:
+            popups = self.driver.find_elements(
+                By.XPATH,
+                '//*[contains(text(),"ขาดการติดต่อ") or contains(text(),"หมดอายุ") or contains(text(),"Session Timeout")]'
+            )
+            if any(p.is_displayed() for p in popups):
+                timeout_detected = True
+                self.log("⚠️ ตรวจพบแจ้งเตือนเซสชันขาดการติดต่อ! กำลังล็อกอินใหม่อัตโนมัติ...")
+        except Exception:
+            pass
+
+        if timeout_detected:
+            self.dismiss_popups(timeout=2)
+            time.sleep(1)
+            self.ensure_login_and_inspection()
+            return True
+
+        # 2) Check if redirected back to signin page
+        try:
+            curr_url = self.driver.current_url.lower()
+            if "signin" in curr_url or "login" in curr_url:
+                self.log("⚠️ ตรวจพบหลุดกลับหน้าล็อกอิน! กำลังเข้าสู่ระบบใหม่อัตโนมัติ...")
+                self.ensure_login_and_inspection()
+                return True
+        except Exception:
+            pass
+
+        return False
+
+    def ensure_login_and_inspection(self):
+        try:
+            if not self.driver:
+                self.login_and_prepare()
+                return True
+            curr = self.driver.current_url.lower()
+            if "signin" in curr or "login" in curr:
+                self.perform_login_step()
+                time.sleep(3)
+                self.dismiss_popups(timeout=2)
+            self.ensure_inspection_page()
+            return True
+        except Exception as e:
+            self.log(f"พยายามล็อกอินใหม่อัตโนมัติ: {e} -> ทำการรีสตาร์ทเบราว์เซอร์ใหม่")
+            self.recover_driver_session()
+            return True
+
+    def clear_search_input(self):
+        try:
+            inputs = self.driver.find_elements(By.ID, "cus_nation_id")
+            if inputs:
+                inp = inputs[0]
+                inp.click()
+                inp.send_keys(Keys.CONTROL, "a")
+                inp.send_keys(Keys.BACKSPACE)
+                time.sleep(0.1)
+                inp.send_keys(Keys.TAB)
+                self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles:true})); arguments[0].blur();", inp)
+        except Exception:
+            pass
+        time.sleep(0.3)
 
     def js_click(self, el):
         try:
@@ -338,7 +459,7 @@ class SiamchaiCrawler:
             return False
 
     def enter_search_cid(self, cid: str):
-        wait = WebDriverWait(self.driver, 10)
+        wait = WebDriverWait(self.driver, 12)
         inp = wait.until(EC.presence_of_element_located((By.ID, "cus_nation_id")))
         try:
             inp.click()
@@ -348,23 +469,36 @@ class SiamchaiCrawler:
         inp.send_keys(Keys.BACKSPACE)
         time.sleep(0.1)
         inp.send_keys(str(cid))
-        time.sleep(0.1)
+        time.sleep(0.15)
         inp.send_keys(Keys.ENTER)
         inp.send_keys(Keys.TAB)
         try:
-            self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles:true})); arguments[0].blur();", inp)
+            self.driver.execute_script("arguments[0].dispatchEvent(new Event('input', {bubbles:true})); arguments[0].dispatchEvent(new Event('change', {bubbles:true})); arguments[0].blur();", inp)
         except Exception:
             pass
-        time.sleep(0.8)
+        time.sleep(0.6)
 
-    def wait_search_result(self, timeout=8):
-        end = time.time() + timeout
+    def wait_search_result(self, timeout=12):
+        start_time = time.time()
+        end_time = start_time + timeout
+        empty_since = None
+        loader_seen = False
         self.last_draft_info = ("", "")
-        while time.time() < end:
+
+        while time.time() < end_time:
             if self.stop_requested:
                 return "STOP"
 
-            # Check draft
+            self.recover_session_if_needed()
+
+            # Check loading spinner / overlay
+            if self.is_loading_overlay_active():
+                loader_seen = True
+                empty_since = None
+                time.sleep(0.2)
+                continue
+
+            # 1. Check draft popup
             try:
                 for el in self.driver.find_elements(By.XPATH, '//*[contains(normalize-space(),"ร่างสัญญา")]'):
                     if el.is_displayed():
@@ -372,30 +506,47 @@ class SiamchaiCrawler:
                         id_m = re.search(r"เลขที่บัตรประชาชน\s*(\d+)", txt)
                         nm_m = re.search(r"ชื่อ\s*([^\s]+(?:\s+[^\s]+)*?)\s*ใช่ไหม", txt)
                         self.last_draft_info = (id_m.group(1) if id_m else "", nm_m.group(1) if nm_m else "")
-                        break
+                        return "DRAFT"
             except Exception:
                 pass
 
+            # Close any unwanted dialog
             self.close_dialog_if_open()
 
-            # Check table rows (Real rows found)
+            # 2. Check table rows (Real rows found)
+            real_rows = []
             try:
                 rows = self.driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
-                real_rows = [r for r in rows if r.text.strip() and "ไม่พบข้อมูล" not in r.text and "No data" not in r.text]
+                for r in rows:
+                    rtxt = r.text.strip()
+                    if rtxt and "ไม่พบข้อมูล" not in rtxt and "No data" not in rtxt and "กำลังโหลด" not in rtxt:
+                        real_rows.append(r)
                 if real_rows:
                     return "FOUND"
             except Exception:
-                pass
+                real_rows = []
 
-            # Check not found
+            # 3. Check not found message
+            not_found_displayed = False
             try:
                 nf = self.driver.find_elements(By.XPATH, '//*[contains(text(),"ไม่พบข้อมูล") or contains(text(),"No data found") or contains(text(),"ไม่พบรายการ")]')
                 if any(n.is_displayed() for n in nf):
-                    return "NOT_FOUND"
+                    not_found_displayed = True
             except Exception:
                 pass
 
-            time.sleep(0.3)
+            now = time.time()
+            if not real_rows:
+                if empty_since is None:
+                    empty_since = now
+                else:
+                    required_wait = 1.5 if (loader_seen or not_found_displayed) else 2.5
+                    if (now - empty_since >= required_wait) and (now - start_time >= 1.5):
+                        return "NOT_FOUND"
+            else:
+                empty_since = None
+
+            time.sleep(0.2)
 
         if self.last_draft_info[1]:
             return "DRAFT"
@@ -413,60 +564,91 @@ class SiamchaiCrawler:
                 for a in arrows:
                     if a.is_displayed():
                         self.js_click(a)
-                        time.sleep(0.5)
+                        time.sleep(0.6)
                         return True
             except Exception:
                 pass
         return False
 
-    def get_val(self, elem_id):
+    def get_val_at_index(self, elem_id: str, idx: int = 0) -> str:
         try:
             els = self.driver.find_elements(By.ID, elem_id)
-            if els:
-                return (els[0].get_attribute("value") or els[0].text or "").strip()
+            if len(els) > idx:
+                return (els[idx].get_attribute("value") or els[idx].text or "").strip()
         except Exception:
             pass
         return ""
+
+    def get_val(self, elem_id: str) -> str:
+        return self.get_val_at_index(elem_id, 0)
 
     def clean_join(self, vals):
         clean = []
         for v in vals:
             v_str = str(v or "").strip()
-            if v_str and v_str not in ["-", "--", "None", "null", "undefined"]:
+            if v_str and v_str not in ["-", "--", "None", "null", "undefined", "nan"]:
                 clean.append(v_str)
         return " ".join(clean)
 
     def extract_details(self, cid: str) -> Dict[str, str]:
-        buyer_id = self.get_val("customer.nationid")
-        buyer_pre = self.get_val("customer.prename")
-        buyer_fn = self.get_val("customer.firstname")
-        buyer_ln = self.get_val("customer.lastname")
+        buyer_id = self.get_val_at_index("customer.nationid", 0)
+        buyer_pre = self.get_val_at_index("customer.prename", 0)
+        buyer_fn = self.get_val_at_index("customer.firstname", 0)
+        buyer_ln = self.get_val_at_index("customer.lastname", 0)
         buyer_name = self.clean_join([buyer_pre, buyer_fn, buyer_ln])
-        buyer_mob = self.get_val("cus_mobile")
+        buyer_mob = self.get_val_at_index("cus_mobile", 0)
 
-        # Address
-        card_addr = self.clean_join([self.get_val("addr1"), self.get_val("addr2"), self.get_val("tambon"), self.get_val("amphur"), self.get_val("province"), self.get_val("zipcode")])
-        cur_addr = card_addr # default fallback
+        # Address buyer
+        card_addr = self.clean_join([
+            self.get_val_at_index("addr1", 0), self.get_val_at_index("addr2", 0),
+            self.get_val_at_index("tambon", 0), self.get_val_at_index("amphur", 0),
+            self.get_val_at_index("province", 0), self.get_val_at_index("zipcode", 0)
+        ])
+        cur_addr = self.clean_join([
+            self.get_val_at_index("addr1", 1), self.get_val_at_index("addr2", 1),
+            self.get_val_at_index("tambon", 1), self.get_val_at_index("amphur", 1),
+            self.get_val_at_index("province", 1), self.get_val_at_index("zipcode", 1)
+        ]) or card_addr
 
-        # Work
-        work_comp = self.get_val("work_company")
-        work_tel = self.get_val("tel")
-        work_type = self.get_val("work_type")
-        work_pos = self.get_val("work_position")
-        work_sal = self.get_val("work_salary")
+        # Work buyer
+        work_comp = self.get_val_at_index("work_company", 0)
+        work_addr = self.clean_join([
+            work_comp,
+            self.get_val_at_index("addr1", 2), self.get_val_at_index("addr2", 2),
+            self.get_val_at_index("tambon", 2), self.get_val_at_index("amphur", 2),
+            self.get_val_at_index("province", 2), self.get_val_at_index("zipcode", 2)
+        ])
+        work_tel = self.get_val_at_index("tel", 0)
+        work_type = self.get_val_at_index("work_type", 0)
+        work_pos = self.get_val_at_index("work_position", 0)
+        work_sal = self.get_val_at_index("work_salary", 0)
         pos_parts = [p for p in [work_type, work_pos] if p]
         if work_sal:
             pos_parts.append(f"เงินเดือน {work_sal}")
         buyer_pos = " ".join(pos_parts)
 
         # Guarantor
-        co_id = self.get_val("co.nationid")
-        co_pre = self.get_val("co.prename")
-        co_fn = self.get_val("co.firstname")
-        co_ln = self.get_val("co.lastname")
+        co_id = self.get_val_at_index("co.nationid", 0)
+        co_pre = self.get_val_at_index("co.prename", 0)
+        co_fn = self.get_val_at_index("co.firstname", 0)
+        co_ln = self.get_val_at_index("co.lastname", 0)
         co_name = self.clean_join([co_pre, co_fn, co_ln])
-        co_mob = self.get_val("co.mobile")
-        co_rel = self.get_val("co_relation")
+        co_mob = self.get_val_at_index("co.mobile", 0)
+        co_rel = self.get_val_at_index("co_relation", 0)
+
+        co_addr = self.clean_join([
+            self.get_val_at_index("addr1", 3), self.get_val_at_index("addr2", 3),
+            self.get_val_at_index("tambon", 3), self.get_val_at_index("amphur", 3),
+            self.get_val_at_index("province", 3), self.get_val_at_index("zipcode", 3)
+        ])
+
+        co_comp = self.get_val_at_index("co_work_company", 0)
+        co_work = self.clean_join([
+            co_comp,
+            self.get_val_at_index("addr1", 5), self.get_val_at_index("addr2", 5),
+            self.get_val_at_index("tambon", 5), self.get_val_at_index("amphur", 5),
+            self.get_val_at_index("province", 5), self.get_val_at_index("zipcode", 5)
+        ])
 
         status = "ผู้เช่าซื้อ"
         clean_cid = re.sub(r"\D", "", str(cid))
@@ -482,15 +664,15 @@ class SiamchaiCrawler:
             "เบอร์โทรผู้เช่าซื้อ": buyer_mob,
             "ที่อยู่ตามบัตรประชาชนผู้เช่าซื้อ": card_addr,
             "ที่อยู่ปัจจุบันผู้เช่าซื้อ": cur_addr,
-            "ที่อยู่ที่ทำงานผู้เช่าซื้อ": work_comp,
+            "ที่อยู่ที่ทำงานผู้เช่าซื้อ": work_addr,
             "เบอร์โทรที่ทำงาน": work_tel,
             "ตำแหน่ง": buyer_pos,
             "เลขบัตรประชาชนผู้ค้ำ": co_id,
             "ชื่อ-นามสกุลผู้ค้ำ": co_name,
             "เบอร์โทรผู้ค้ำ": co_mob,
             "ความสัมพันธ์": co_rel,
-            "ที่อยู่ผู้ค้ำ": "",
-            "ที่ทำงานผู้ค้ำ": "",
+            "ที่อยู่ผู้ค้ำ": co_addr,
+            "ที่ทำงานผู้ค้ำ": co_work,
         }
 
     def make_not_found(self, cid: str) -> Dict[str, str]:
@@ -504,14 +686,17 @@ class SiamchaiCrawler:
         cid_str = str(cid).strip()
         if not cid_str:
             return self.make_not_found(cid)
+
+        self.recover_session_if_needed()
         self.ensure_back_to_search()
+        self.clear_search_input()
         self.enter_search_cid(cid_str)
-        res = self.wait_search_result(timeout=7)
+        res = self.wait_search_result(timeout=12)
         self.capture_screen()
 
         if res == "FOUND":
             if self.click_first_arrow():
-                time.sleep(1.5)
+                time.sleep(1.2)
                 self.close_dialog_if_open()
                 try:
                     WebDriverWait(self.driver, 10).until(
@@ -524,6 +709,9 @@ class SiamchaiCrawler:
                 self.capture_screen()
                 self.ensure_back_to_search()
                 return row
+            else:
+                self.ensure_back_to_search()
+                return self.make_not_found(cid_str)
         elif res == "DRAFT":
             d_id, d_name = self.last_draft_info
             row = self.make_not_found(cid_str)
@@ -531,6 +719,7 @@ class SiamchaiCrawler:
             row["สถานะ"] = "ร่างสัญญา"
             if d_id:
                 row["เลขบัตรประชาชนผู้เช่าซื้อ"] = d_id
+            self.close_dialog_if_open()
             self.ensure_back_to_search()
             return row
 

@@ -12,13 +12,15 @@ from pydantic import BaseModel
 
 from backend.storage import (
     BASE_DIR, RESULTS_DIR, load_config, save_config,
-    parse_excel_cids, parse_cids_from_text
+    parse_excel_cids, parse_cids_from_text,
+    load_users, save_users, get_user, add_user, update_user_password, delete_user
 )
 from backend.auth import (
-    authenticate_user, create_session_token, get_current_user, COOKIE_NAME,
+    authenticate_user, create_session_token, get_current_user,
+    get_current_user_info, require_admin, COOKIE_NAME,
     verify_session_token
 )
-from backend.unified_engine import unified_job, run_unified_process
+from backend.unified_engine import job_manager, UnifiedJobState
 
 app = FastAPI(title="Siamchai & TrueCorp Unified Extractor")
 
@@ -75,6 +77,15 @@ class ConfigUpdateRequest(BaseModel):
     true_password: Optional[str] = None
     headless: Optional[bool] = None
 
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "member"
+    name: Optional[str] = ""
+
+class ResetPasswordRequest(BaseModel):
+    password: str
+
 # ------------------ Page Routes ------------------
 @app.get("/", response_class=HTMLResponse)
 async def serve_index(request: Request):
@@ -89,7 +100,6 @@ async def serve_index(request: Request):
             pass
 
     if not is_authenticated:
-        # Redirect to login page
         return HTMLResponse("<script>window.location.href='/login';</script>")
 
     index_file = os.path.join(STATIC_DIR, "index.html")
@@ -112,15 +122,21 @@ async def api_login(req: LoginRequest, response: Response):
     if not authenticate_user(req.username, req.password):
         raise HTTPException(status_code=401, detail="ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
     token = create_session_token(req.username)
-    # Set HTTP-only Cookie
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
-        httponly=False, # Allow JS to read for websocket or API
+        httponly=False,
         max_age=30 * 86400,
         samesite="lax"
     )
-    return {"status": "ok", "token": token, "username": req.username}
+    user_info = get_user(req.username) or {}
+    return {
+        "status": "ok",
+        "token": token,
+        "username": req.username,
+        "role": user_info.get("role", "member" if req.username.lower() != "admin" else "admin"),
+        "name": user_info.get("name", req.username)
+    }
 
 @app.post("/api/auth/logout")
 async def api_logout(response: Response):
@@ -128,43 +144,97 @@ async def api_logout(response: Response):
     return {"status": "ok"}
 
 @app.get("/api/auth/me")
-async def api_me(user: str = Depends(get_current_user)):
-    return {"status": "ok", "username": user}
+async def api_me(user_info: dict = Depends(get_current_user_info)):
+    return {"status": "ok", **user_info}
+
+# ------------------ User Management Endpoints (Admin Only) ------------------
+@app.get("/api/users")
+async def list_users(admin: dict = Depends(require_admin)):
+    users = load_users()
+    safe_users = [
+        {
+            "username": u["username"],
+            "role": u.get("role", "member"),
+            "name": u.get("name", u["username"]),
+            "created_at": u.get("created_at")
+        }
+        for u in users
+    ]
+    return {"status": "ok", "users": safe_users}
+
+@app.post("/api/users")
+async def create_new_user(req: CreateUserRequest, admin: dict = Depends(require_admin)):
+    try:
+        new_u = add_user(req.username, req.password, role=req.role, name=req.name or "")
+        return {
+            "status": "ok",
+            "user": {
+                "username": new_u["username"],
+                "role": new_u["role"],
+                "name": new_u["name"],
+                "created_at": new_u["created_at"]
+            }
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/api/users/{username}/password")
+async def change_user_password(username: str, req: ResetPasswordRequest, admin: dict = Depends(require_admin)):
+    try:
+        update_user_password(username, req.password)
+        return {"status": "ok", "message": f"เปลี่ยนรหัสผ่านสำหรับผู้ใช้ '{username}' สำเร็จ"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/users/{username}")
+async def remove_existing_user(username: str, admin: dict = Depends(require_admin)):
+    try:
+        delete_user(username, current_admin=admin["username"])
+        return {"status": "ok", "message": f"ลบผู้ใช้ '{username}' สำเร็จ"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 # ------------------ Process & Control Endpoints ------------------
 @app.get("/api/status")
-async def get_status(user: str = Depends(get_current_user)):
-    return unified_job.to_dict()
+async def get_status(job_id: Optional[str] = None, user: str = Depends(get_current_user)):
+    if job_id:
+        job = job_manager.get_job_by_id(job_id)
+        if job:
+            return job.to_dict()
+    job = job_manager.get_user_current_job(user)
+    return job.to_dict()
 
 @app.post("/api/start")
 async def start_crawl(req: StartRequest, user: str = Depends(get_current_user)):
-    if unified_job.status == "running":
-        raise HTTPException(status_code=400, detail="ระบบกำลังทำงานอยู่ กรุณารอให้เสร็จหรือกดหยุดก่อน")
     if not req.cids:
         raise HTTPException(status_code=400, detail="กรุณาระบุเลขค้นหาอย่างน้อย 1 รายการ")
 
-    t = threading.Thread(
-        target=run_unified_process,
-        kwargs={
-            "cids": req.cids,
-            "mode": req.mode,
-            "job_name": req.job_name,
-            "headless": req.headless,
-        },
-        daemon=True
+    job = job_manager.submit_job(
+        user=user,
+        cids=req.cids,
+        mode=req.mode,
+        job_name=req.job_name,
+        headless=req.headless
     )
-    t.start()
-    return {"status": "started", "total": len(req.cids), "mode": req.mode}
+    return {
+        "status": "queued" if job.queue_position > 1 else "started",
+        "job_id": job.job_id,
+        "queue_position": job.queue_position,
+        "total": len(req.cids),
+        "mode": req.mode
+    }
 
 @app.post("/api/stop")
-async def stop_crawl(user: str = Depends(get_current_user)):
-    unified_job.stop_requested = True
-    if unified_job.siamchai_crawler:
-        unified_job.siamchai_crawler.stop_requested = True
-    if unified_job.true_crawler:
-        unified_job.true_crawler.stop_requested = True
-    unified_job.add_log("🛑 ได้รับคำสั่งหยุดการทำงานจากผู้ใช้...")
-    return {"status": "stopping"}
+async def stop_crawl(job_id: Optional[str] = None, user: str = Depends(get_current_user)):
+    stopped = job_manager.stop_job(user=user, job_id=job_id)
+    if stopped:
+        return {"status": "stopping"}
+    return {"status": "not_running_or_not_found"}
+
+@app.get("/api/jobs")
+async def get_jobs_history(user: str = Depends(get_current_user)):
+    history = job_manager.get_user_jobs_history(user=user)
+    return {"status": "ok", "jobs": history}
 
 # ------------------ Upload & Download ------------------
 @app.post("/api/upload_excel")
@@ -193,22 +263,34 @@ async def upload_excel(file: UploadFile = File(...), user: str = Depends(get_cur
     }
 
 @app.get("/api/download")
-async def download_excel(type: str = "combined", token: Optional[str] = None, request: Request = None):
+async def download_excel(
+    type: str = "combined",
+    job_id: Optional[str] = None,
+    token: Optional[str] = None,
+    request: Request = None
+):
     # Verify token from query or cookie
     auth_t = token or (request.cookies.get(COOKIE_NAME) if request else None)
+    current_username = "admin"
     if auth_t:
         try:
-            verify_session_token(auth_t)
+            current_username = verify_session_token(auth_t)
         except Exception:
             raise HTTPException(status_code=401, detail="Unauthorized")
-    
+
+    target_job = None
+    if job_id:
+        target_job = job_manager.get_job_by_id(job_id)
+    if not target_job:
+        target_job = job_manager.get_user_current_job(current_username)
+
     target_path = None
     if type == "siamchai":
-        target_path = unified_job.sc_excel_path
+        target_path = target_job.sc_excel_path
     elif type == "true":
-        target_path = unified_job.tr_excel_path
+        target_path = target_job.tr_excel_path
     else: # combined
-        target_path = unified_job.combined_excel_path or unified_job.sc_excel_path or unified_job.tr_excel_path
+        target_path = target_job.combined_excel_path or target_job.sc_excel_path or target_job.tr_excel_path
 
     if not target_path or not os.path.exists(target_path):
         raise HTTPException(status_code=404, detail="ยังไม่มีไฟล์ Excel ให้ดาวน์โหลดสำหรับส่วนนี้")
@@ -220,21 +302,20 @@ async def download_excel(type: str = "combined", token: Optional[str] = None, re
     )
 
 @app.get("/api/download/siamchai")
-async def download_siamchai_excel(token: Optional[str] = None, request: Request = None):
-    return await download_excel(type="siamchai", token=token, request=request)
+async def download_siamchai_excel(job_id: Optional[str] = None, token: Optional[str] = None, request: Request = None):
+    return await download_excel(type="siamchai", job_id=job_id, token=token, request=request)
 
 @app.get("/api/download/true")
-async def download_true_excel(token: Optional[str] = None, request: Request = None):
-    return await download_excel(type="true", token=token, request=request)
+async def download_true_excel(job_id: Optional[str] = None, token: Optional[str] = None, request: Request = None):
+    return await download_excel(type="true", job_id=job_id, token=token, request=request)
 
 @app.get("/api/download/combined")
-async def download_combined_excel(token: Optional[str] = None, request: Request = None):
-    return await download_excel(type="combined", token=token, request=request)
-
+async def download_combined_excel(job_id: Optional[str] = None, token: Optional[str] = None, request: Request = None):
+    return await download_excel(type="combined", job_id=job_id, token=token, request=request)
 
 # ------------------ Config Endpoints ------------------
 @app.get("/api/config")
-async def get_config_endpoint(user: str = Depends(get_current_user)):
+async def get_config_endpoint(admin: dict = Depends(require_admin)):
     cfg = load_config()
     # Mask passwords
     masked = cfg.copy()
@@ -247,7 +328,7 @@ async def get_config_endpoint(user: str = Depends(get_current_user)):
     return masked
 
 @app.post("/api/config")
-async def update_config_endpoint(req: ConfigUpdateRequest, user: str = Depends(get_current_user)):
+async def update_config_endpoint(req: ConfigUpdateRequest, admin: dict = Depends(require_admin)):
     cfg = load_config()
     if req.web_username is not None and req.web_username.strip():
         cfg["web_username"] = req.web_username.strip()
@@ -272,12 +353,19 @@ async def update_config_endpoint(req: ConfigUpdateRequest, user: str = Depends(g
 
 # ------------------ WebSocket ------------------
 @app.websocket("/ws/status")
-async def websocket_status(websocket: WebSocket):
+async def websocket_status(websocket: WebSocket, token: Optional[str] = None):
     await websocket.accept()
     active_websockets.append(websocket)
+    user = "admin"
+    if token:
+        try:
+            user = verify_session_token(token)
+        except Exception:
+            pass
     try:
         while True:
-            data = unified_job.to_dict()
+            job = job_manager.get_user_current_job(user)
+            data = job.to_dict()
             await websocket.send_json(data)
             await asyncio.sleep(0.7)
     except (WebSocketDisconnect, Exception):
