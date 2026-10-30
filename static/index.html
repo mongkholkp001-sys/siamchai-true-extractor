@@ -404,29 +404,45 @@
 
       <!-- Add New User Form -->
       <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
-        <span class="font-semibold text-indigo-400 block text-xs">➕ เพิ่มบัญชีผู้ใช้งานใหม่</span>
-        <div class="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+        <span class="font-semibold text-indigo-400 block text-xs">➕ เพิ่มบัญชีผู้ใช้งานใหม่ (กำหนดวันหมดอายุ & โควต้าเครื่อง)</span>
+        <div class="grid grid-cols-1 sm:grid-cols-6 gap-2 text-xs">
           <div>
             <label class="block text-slate-400 mb-1">Username *</label>
-            <input type="text" id="new-user-name" placeholder="เช่น staff1" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white">
+            <input type="text" id="new-user-name" placeholder="เช่น client1" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white">
           </div>
           <div>
             <label class="block text-slate-400 mb-1">Password *</label>
             <input type="password" id="new-user-pass" placeholder="รหัสผ่าน" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white">
           </div>
           <div>
-            <label class="block text-slate-400 mb-1">ชื่อ-นามสกุล / แผนก</label>
-            <input type="text" id="new-user-fullname" placeholder="เช่น สมชาย (ทีมคัด)" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white">
+            <label class="block text-slate-400 mb-1">ชื่อผู้ใช้ / ลูกค้า</label>
+            <input type="text" id="new-user-fullname" placeholder="เช่น คุณเอ (เช่ารายเดือน)" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white">
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">วันหมดอายุ (1 เดือน)</label>
+            <input type="date" id="new-user-expire" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-white text-xs">
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">โควต้าเครื่อง</label>
+            <select id="new-user-maxdev" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-white">
+              <option value="2">2 เครื่อง (แนะนำ)</option>
+              <option value="1">1 เครื่อง</option>
+              <option value="3">3 เครื่อง</option>
+              <option value="5">5 เครื่อง</option>
+            </select>
           </div>
           <div>
             <label class="block text-slate-400 mb-1">สิทธิ์ (Role)</label>
-            <select id="new-user-role" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white">
-              <option value="member">พนักงาน (Member)</option>
+            <select id="new-user-role" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-white">
+              <option value="member">ลูกค้า / พนักงาน</option>
               <option value="admin">ผู้ดูแลระบบ (Admin)</option>
             </select>
           </div>
         </div>
-        <div class="flex justify-end">
+        <div class="flex justify-between items-center pt-1">
+          <button type="button" id="btn-quick-1month" class="text-[11px] text-sky-400 hover:text-sky-300 underline">
+            ⚡ คลิกตั้งวันหมดอายุ +30 วัน (1 เดือน) ทันที
+          </button>
           <button id="btn-create-user" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center gap-1.5">
             <span>บันทึกเพิ่มผู้ใช้</span>
           </button>
@@ -446,12 +462,14 @@
                 <th class="p-2.5">ชื่อผู้ใช้ (Username)</th>
                 <th class="p-2.5">ชื่อแสดงผล</th>
                 <th class="p-2.5">ระดับสิทธิ์</th>
+                <th class="p-2.5 text-center">วันหมดอายุ</th>
+                <th class="p-2.5 text-center">เครื่องที่ผูก (Device)</th>
                 <th class="p-2.5 text-right">การจัดการ</th>
               </tr>
             </thead>
             <tbody id="users-table-body" class="divide-y divide-slate-800/60">
               <tr>
-                <td colspan="4" class="p-4 text-center text-slate-500">กำลังโหลดข้อมูลผู้ใช้...</td>
+                <td colspan="6" class="p-4 text-center text-slate-500">กำลังโหลดข้อมูลผู้ใช้...</td>
               </tr>
             </tbody>
           </table>

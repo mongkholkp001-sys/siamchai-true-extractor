@@ -6,7 +6,21 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import sys
+import shutil
+
+if getattr(sys, "frozen", False):
+    BUNDLE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+    desktop_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+    if os.path.abspath(exe_dir).lower() == os.path.abspath(desktop_dir).lower():
+        BASE_DIR = r"C:\Siamchai_True_Hub"
+    else:
+        BASE_DIR = exe_dir
+else:
+    BUNDLE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    BASE_DIR = BUNDLE_DIR
+
 DATA_DIR = os.path.join(BASE_DIR, "data")
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
@@ -14,6 +28,20 @@ USERS_FILE = os.path.join(DATA_DIR, "users.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
+
+# Pre-populate default data from bundle if not existing
+bundle_data = os.path.join(BUNDLE_DIR, "data")
+if os.path.exists(bundle_data):
+    if not os.path.exists(CONFIG_FILE) and os.path.exists(os.path.join(bundle_data, "config.json")):
+        try:
+            shutil.copy2(os.path.join(bundle_data, "config.json"), CONFIG_FILE)
+        except Exception:
+            pass
+    if not os.path.exists(USERS_FILE) and os.path.exists(os.path.join(bundle_data, "users.json")):
+        try:
+            shutil.copy2(os.path.join(bundle_data, "users.json"), USERS_FILE)
+        except Exception:
+            pass
 
 DEFAULT_CONFIG = {
     # Web Dashboard Auth
@@ -103,7 +131,7 @@ def get_user(username: str):
             return u
     return None
 
-def add_user(username: str, password: str, role: str = "member", name: str = ""):
+def add_user(username: str, password: str, role: str = "member", name: str = "", expire_date: str = "", max_devices: int = 2):
     users = load_users()
     clean_u = username.strip()
     if not clean_u:
@@ -116,11 +144,39 @@ def add_user(username: str, password: str, role: str = "member", name: str = "")
         "password": password.strip(),
         "role": role if role in ["admin", "member"] else "member",
         "name": name.strip() or clean_u,
+        "expire_date": expire_date.strip() if expire_date else "", # YYYY-MM-DD
+        "max_devices": max(1, int(max_devices or 2)),
+        "devices": [], # [{device_id, ip, first_seen, last_seen}]
         "created_at": int(time.time())
     }
     users.append(new_user)
     save_users(users)
     return new_user
+
+def reset_user_devices(username: str):
+    users = load_users()
+    clean_u = username.strip().lower()
+    for u in users:
+        if u.get("username", "").strip().lower() == clean_u:
+            u["devices"] = []
+            save_users(users)
+            return True
+    return False
+
+def update_user_details(username: str, name: str = None, expire_date: str = None, max_devices: int = None):
+    users = load_users()
+    clean_u = username.strip().lower()
+    for u in users:
+        if u.get("username", "").strip().lower() == clean_u:
+            if name is not None:
+                u["name"] = name.strip()
+            if expire_date is not None:
+                u["expire_date"] = expire_date.strip()
+            if max_devices is not None:
+                u["max_devices"] = max(1, int(max_devices))
+            save_users(users)
+            return True
+    return False
 
 def update_user_password(username: str, new_password: str):
     users = load_users()

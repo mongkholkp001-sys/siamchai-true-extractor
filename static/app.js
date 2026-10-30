@@ -713,16 +713,58 @@ async function loadUsersList() {
         ? `<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Admin</span>`
         : `<span class="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-slate-300 border border-slate-700">Member</span>`;
 
+      // Expiration display
+      let expBadge = `<span class="text-slate-500 text-xs">ไม่จำกัด</span>`;
+      if (u.expire_date) {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const isExp = todayStr > u.expire_date;
+        if (isExp) {
+          expBadge = `<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30">หมดอายุ (${u.expire_date})</span>`;
+        } else {
+          expBadge = `<span class="px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">${u.expire_date}</span>`;
+        }
+      }
+
+      // Device quota display
+      const devCnt = u.devices_count || 0;
+      const maxDev = u.max_devices || 2;
+      const devBadge = `<span class="px-2 py-0.5 rounded text-[11px] ${devCnt >= maxDev ? 'bg-amber-500/20 text-amber-300 font-semibold' : 'bg-slate-800 text-slate-300'}">${devCnt}/${maxDev} เครื่อง</span>`;
+
       tr.innerHTML = `
         <td class="p-2.5 font-mono text-white font-medium">${u.username}</td>
         <td class="p-2.5 text-slate-300">${u.name || '-'}</td>
         <td class="p-2.5">${roleBadge}</td>
+        <td class="p-2.5 text-center">${expBadge}</td>
+        <td class="p-2.5 text-center">${devBadge}</td>
         <td class="p-2.5 text-right space-x-1.5">
-          <button class="btn-user-reset px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs border border-slate-700" data-user="${u.username}">🔑 รีเซ็ตรหัส</button>
-          ${!isCurrent ? `<button class="btn-user-del px-2.5 py-1 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 text-xs border border-rose-500/30" data-user="${u.username}">🗑️ ลบ</button>` : `<span class="text-[11px] text-slate-500 italic pl-1">(บัญชีนี้)</span>`}
+          ${u.role !== 'admin' ? `<button class="btn-user-reset-dev px-2 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-xs border border-amber-500/30" data-user="${u.username}" title="ล้างประวัติเครื่องเพื่อให้ผูกเครื่องใหม่">💻 ล้างเครื่อง</button>` : ''}
+          <button class="btn-user-reset px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs border border-slate-700" data-user="${u.username}">🔑 รหัสผ่าน</button>
+          ${!isCurrent ? `<button class="btn-user-del px-2 py-1 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 text-xs border border-rose-500/30" data-user="${u.username}">🗑️ ลบ</button>` : `<span class="text-[11px] text-slate-500 italic pl-1">(บัญชีนี้)</span>`}
         </td>
       `;
       usersTableBody.appendChild(tr);
+    });
+
+    document.querySelectorAll('.btn-user-reset-dev').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const u = e.currentTarget.getAttribute('data-user');
+        if (!confirm(`ต้องการรีเซ็ตประวัติเครื่องที่ผูกไว้ของผู้ใช้ "${u}" ใช่หรือไม่?\n(ผู้ใช้จะสามารถผูกคอมเครื่องใหม่ได้ทันที)`)) return;
+        try {
+          const r = await fetch(`/api/users/${encodeURIComponent(u)}/reset-devices`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${authToken}` }
+          });
+          const resData = await r.json();
+          if (r.ok) {
+            alert(`✅ รีเซ็ตเครื่องสำหรับ ${u} เรียบร้อยแล้ว`);
+            loadUsersList();
+          } else {
+            alert(`❌ เกิดข้อผิดพลาด: ${resData.detail || 'ไม่สามารถรีเซ็ตได้'}`);
+          }
+        } catch (err) {
+          alert('เกิดข้อผิดพลาด: ' + err.message);
+        }
+      });
     });
 
     document.querySelectorAll('.btn-user-reset').forEach(btn => {
@@ -791,11 +833,27 @@ if (btnCloseUsers) btnCloseUsers.addEventListener('click', () => modalUsers.clas
 if (btnDoneUsers) btnDoneUsers.addEventListener('click', () => modalUsers.classList.add('hidden'));
 if (btnRefreshUsers) btnRefreshUsers.addEventListener('click', loadUsersList);
 
+// Quick +30 days button
+const btnQuick1Month = document.getElementById('btn-quick-1month');
+if (btnQuick1Month) {
+  btnQuick1Month.addEventListener('click', () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const inp = document.getElementById('new-user-expire');
+    if (inp) inp.value = `${yyyy}-${mm}-${dd}`;
+  });
+}
+
 if (btnCreateUser) {
   btnCreateUser.addEventListener('click', async () => {
     const uname = document.getElementById('new-user-name').value.trim();
     const upass = document.getElementById('new-user-pass').value.trim();
     const ufullname = document.getElementById('new-user-fullname').value.trim();
+    const uexpire = document.getElementById('new-user-expire').value;
+    const umaxdev = parseInt(document.getElementById('new-user-maxdev').value || '2', 10);
     const urole = document.getElementById('new-user-role').value;
 
     if (!uname || !upass) {
@@ -814,15 +872,18 @@ if (btnCreateUser) {
           username: uname,
           password: upass,
           name: ufullname,
+          expire_date: uexpire,
+          max_devices: umaxdev,
           role: urole
         })
       });
       const data = await res.json();
       if (res.ok) {
-        alert(`✅ สร้างผู้ใช้งาน "${uname}" เรียบร้อยแล้ว`);
+        alert(`✅ สร้างผู้ใช้งาน "${uname}" เรียบร้อยแล้ว (โควต้า ${umaxdev} เครื่อง, หมดอายุ: ${uexpire || 'ไม่จำกัด'})`);
         document.getElementById('new-user-name').value = '';
         document.getElementById('new-user-pass').value = '';
         document.getElementById('new-user-fullname').value = '';
+        document.getElementById('new-user-expire').value = '';
         loadUsersList();
       } else {
         alert(`❌ ไม่สามารถสร้างผู้ใช้ได้: ${data.detail || 'เกิดข้อผิดพลาด'}`);

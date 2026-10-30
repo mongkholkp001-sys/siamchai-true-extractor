@@ -11,9 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from backend.storage import (
-    BASE_DIR, RESULTS_DIR, load_config, save_config,
+    BUNDLE_DIR, BASE_DIR, DATA_DIR, RESULTS_DIR, load_config, save_config,
     parse_excel_cids, parse_cids_from_text,
-    load_users, save_users, get_user, add_user, update_user_password, delete_user
+    load_users, save_users, get_user, add_user, update_user_password, delete_user,
+    reset_user_devices, update_user_details
 )
 from backend.auth import (
     authenticate_user, create_session_token, get_current_user,
@@ -41,7 +42,7 @@ async def add_no_cache_headers(request: Request, call_next):
         response.headers["Expires"] = "0"
     return response
 
-STATIC_DIR = os.path.join(BASE_DIR, "static")
+STATIC_DIR = os.path.join(BUNDLE_DIR, "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -61,6 +62,7 @@ def get_lan_ip():
 class LoginRequest(BaseModel):
     username: str
     password: str
+    device_id: Optional[str] = ""
 
 class StartRequest(BaseModel):
     cids: List[str]
@@ -82,6 +84,13 @@ class CreateUserRequest(BaseModel):
     password: str
     role: str = "member"
     name: Optional[str] = ""
+    expire_date: Optional[str] = ""
+    max_devices: Optional[int] = 2
+
+class UpdateUserRequest(BaseModel):
+    name: Optional[str] = None
+    expire_date: Optional[str] = None
+    max_devices: Optional[int] = None
 
 class ResetPasswordRequest(BaseModel):
     password: str
@@ -118,10 +127,11 @@ async def serve_login():
 
 # ------------------ Auth API Endpoints ------------------
 @app.post("/api/auth/login")
-async def api_login(req: LoginRequest, response: Response):
-    if not authenticate_user(req.username, req.password):
-        raise HTTPException(status_code=401, detail="ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
-    token = create_session_token(req.username)
+async def api_login(req: LoginRequest, request: Request, response: Response):
+    client_ip = request.client.host if request.client else ""
+    auth_result = authenticate_user(req.username, req.password, device_id=req.device_id, client_ip=client_ip)
+    
+    token = create_session_token(auth_result["username"])
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
@@ -129,13 +139,16 @@ async def api_login(req: LoginRequest, response: Response):
         max_age=30 * 86400,
         samesite="lax"
     )
-    user_info = get_user(req.username) or {}
+    user_info = get_user(auth_result["username"]) or {}
     return {
         "status": "ok",
         "token": token,
-        "username": req.username,
-        "role": user_info.get("role", "member" if req.username.lower() != "admin" else "admin"),
-        "name": user_info.get("name", req.username)
+        "username": auth_result["username"],
+        "role": auth_result.get("role", "member"),
+        "name": auth_result.get("name", auth_result["username"]),
+        "expire_date": user_info.get("expire_date", ""),
+        "devices_count": len(user_info.get("devices", [])),
+        "max_devices": user_info.get("max_devices", 2)
     }
 
 @app.post("/api/auth/logout")
@@ -145,7 +158,14 @@ async def api_logout(response: Response):
 
 @app.get("/api/auth/me")
 async def api_me(user_info: dict = Depends(get_current_user_info)):
-    return {"status": "ok", **user_info}
+    u = get_user(user_info["username"]) or {}
+    return {
+        "status": "ok",
+        **user_info,
+        "expire_date": u.get("expire_date", ""),
+        "devices": u.get("devices", []),
+        "max_devices": u.get("max_devices", 2)
+    }
 
 # ------------------ User Management Endpoints (Admin Only) ------------------
 @app.get("/api/users")
@@ -156,6 +176,10 @@ async def list_users(admin: dict = Depends(require_admin)):
             "username": u["username"],
             "role": u.get("role", "member"),
             "name": u.get("name", u["username"]),
+            "expire_date": u.get("expire_date", ""),
+            "max_devices": u.get("max_devices", 2),
+            "devices_count": len(u.get("devices", [])),
+            "devices": u.get("devices", []),
             "created_at": u.get("created_at")
         }
         for u in users
@@ -165,18 +189,41 @@ async def list_users(admin: dict = Depends(require_admin)):
 @app.post("/api/users")
 async def create_new_user(req: CreateUserRequest, admin: dict = Depends(require_admin)):
     try:
-        new_u = add_user(req.username, req.password, role=req.role, name=req.name or "")
+        new_u = add_user(
+            req.username, 
+            req.password, 
+            role=req.role, 
+            name=req.name or "",
+            expire_date=req.expire_date or "",
+            max_devices=req.max_devices or 2
+        )
         return {
             "status": "ok",
             "user": {
                 "username": new_u["username"],
                 "role": new_u["role"],
                 "name": new_u["name"],
+                "expire_date": new_u.get("expire_date", ""),
+                "max_devices": new_u.get("max_devices", 2),
                 "created_at": new_u["created_at"]
             }
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/api/users/{username}")
+async def edit_user(username: str, req: UpdateUserRequest, admin: dict = Depends(require_admin)):
+    ok = update_user_details(username, name=req.name, expire_date=req.expire_date, max_devices=req.max_devices)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"ไม่พบผู้ใช้ '{username}'")
+    return {"status": "ok", "message": f"อัปเดตข้อมูลผู้ใช้ '{username}' สำเร็จ"}
+
+@app.post("/api/users/{username}/reset-devices")
+async def reset_devices(username: str, admin: dict = Depends(require_admin)):
+    ok = reset_user_devices(username)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"ไม่พบผู้ใช้ '{username}'")
+    return {"status": "ok", "message": f"รีเซ็ตสิทธิ์อุปกรณ์สำหรับผู้ใช้ '{username}' เรียบร้อยแล้ว (สามารถผูกเครื่องใหม่ได้)"}
 
 @app.put("/api/users/{username}/password")
 async def change_user_password(username: str, req: ResetPasswordRequest, admin: dict = Depends(require_admin)):
@@ -242,7 +289,7 @@ async def get_jobs_history(user: str = Depends(get_current_user)):
 @app.post("/api/upload_excel")
 async def upload_excel(file: UploadFile = File(...), user: str = Depends(get_current_user)):
     ext = os.path.splitext(file.filename)[1].lower()
-    temp_path = os.path.join(BASE_DIR, "data", f"upload_{int(time.time())}{ext}")
+    temp_path = os.path.join(DATA_DIR, f"upload_{int(time.time())}{ext}")
     with open(temp_path, "wb") as f:
         content = await file.read()
         f.write(content)

@@ -115,9 +115,30 @@
     const errText = document.getElementById('error-text');
     const btnSubmit = document.getElementById('btn-submit');
 
-    // Auto-fill default hint
-    if (!document.getElementById('username').value) {
-      document.getElementById('username').value = 'admin';
+    // Generate or retrieve unique persistent Device / Hardware Fingerprint
+    function getDeviceFingerprint() {
+      let devId = localStorage.getItem('siamchai_device_id');
+      if (!devId) {
+        const nav = window.navigator;
+        const screen = window.screen;
+        const raw = [
+          nav.userAgent,
+          nav.language,
+          screen.colorDepth,
+          screen.width + 'x' + screen.height,
+          new Date().getTimezoneOffset(),
+          Math.random().toString(36).substring(2, 15)
+        ].join('###');
+        // Simple 32-bit hash
+        let hash = 0;
+        for (let i = 0; i < raw.length; i++) {
+          hash = ((hash << 5) - hash) + raw.charCodeAt(i);
+          hash |= 0;
+        }
+        devId = 'DEV-' + Math.abs(hash).toString(16).toUpperCase() + '-' + Date.now().toString(36).toUpperCase();
+        localStorage.setItem('siamchai_device_id', devId);
+      }
+      return devId;
     }
 
     form.addEventListener('submit', async (e) => {
@@ -128,12 +149,13 @@
 
       const u = document.getElementById('username').value.trim();
       const p = document.getElementById('password').value.trim();
+      const devId = getDeviceFingerprint();
 
       try {
         const res = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: u, password: p })
+          body: JSON.stringify({ username: u, password: p, device_id: devId })
         });
         const data = await res.json();
         if (res.ok && data.status === 'ok') {

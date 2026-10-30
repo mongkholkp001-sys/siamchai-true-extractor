@@ -73,23 +73,82 @@ async def get_current_user(
 
     raise HTTPException(status_code=401, detail="Not authenticated")
 
-def authenticate_user(username: str, password: str) -> bool:
-    from backend.storage import get_user, load_config
+def authenticate_user(username: str, password: str, device_id: str = "", client_ip: str = "") -> dict:
+    """
+    Validates username and password, then checks expiration and hardware/device limits (max 2 devices).
+    Returns {"ok": True, "user": user_dict} or raises HTTPException with specific clear Thai message.
+    """
+    from datetime import datetime
+    from backend.storage import get_user, load_config, save_users, load_users
     clean_u = (username or "").strip()
     clean_p = (password or "").strip()
     if not clean_u or not clean_p:
-        return False
+        raise HTTPException(status_code=401, detail="กรุณากรอกชื่อผู้ใช้และรหัสผ่าน")
 
     u = get_user(clean_u)
-    if u:
-        expected_p = str(u.get("password", "")).strip()
-        return secrets.compare_digest(clean_p, expected_p)
+    if not u:
+        # Fallback to config default
+        cfg = load_config()
+        valid_u = cfg.get("web_username", "admin").strip()
+        valid_p = cfg.get("web_password", "password123").strip()
+        if secrets.compare_digest(clean_u, valid_u) and secrets.compare_digest(clean_p, valid_p):
+            return {"ok": True, "username": valid_u, "role": "admin", "name": "ผู้ดูแลระบบ (Admin)"}
+        raise HTTPException(status_code=401, detail="ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
 
-    # Fallback to config default
-    cfg = load_config()
-    valid_u = cfg.get("web_username", "admin").strip()
-    valid_p = cfg.get("web_password", "password123").strip()
-    return secrets.compare_digest(clean_u, valid_u) and secrets.compare_digest(clean_p, valid_p)
+    expected_p = str(u.get("password", "")).strip()
+    if not secrets.compare_digest(clean_p, expected_p):
+        raise HTTPException(status_code=401, detail="ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+
+    # 1. Check expiration date (Admin is never expired)
+    if u.get("role") != "admin":
+        expire_str = str(u.get("expire_date", "")).strip()
+        if expire_str:
+            try:
+                # Expect YYYY-MM-DD
+                exp_dt = datetime.strptime(expire_str, "%Y-%m-%d")
+                # Set to end of day 23:59:59
+                exp_ts = exp_dt.timestamp() + 86399
+                if time.time() > exp_ts:
+                    raise HTTPException(
+                        status_code=403, 
+                        detail=f"บัญชีผู้ใช้นี้หมดอายุการใช้งานแล้ว (หมดอายุเมื่อ: {expire_str}) กรุณาติดต่อผู้ดูแลระบบเพื่อต่ออายุ"
+                    )
+            except ValueError:
+                pass
+
+    # 2. Check Device / MAC Address limit (Max 2 devices) (Admin is exempt)
+    if u.get("role") != "admin" and device_id:
+        max_dev = int(u.get("max_devices") or 2)
+        users = load_users()
+        for target_u in users:
+            if target_u.get("username", "").strip().lower() == clean_u.lower():
+                devices = target_u.get("devices")
+                if not isinstance(devices, list):
+                    devices = []
+                
+                # Check if device_id is already registered
+                existing_dev = next((d for d in devices if d.get("id") == device_id), None)
+                if existing_dev:
+                    existing_dev["last_seen"] = int(time.time())
+                    existing_dev["ip"] = client_ip or existing_dev.get("ip", "")
+                else:
+                    if len(devices) >= max_dev:
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"บัญชีนี้ถูกผูกใช้งานครบโควต้า {max_dev} เครื่องแล้ว ไม่สามารถเข้าใช้งานจากเครื่องใหม่ได้ กรุณาติดต่อผู้ดูแลระบบเพื่อรีเซ็ตเครื่อง"
+                        )
+                    devices.append({
+                        "id": device_id,
+                        "ip": client_ip,
+                        "first_seen": int(time.time()),
+                        "last_seen": int(time.time())
+                    })
+                target_u["devices"] = devices
+                save_users(users)
+                u = target_u
+                break
+
+    return {"ok": True, "username": u["username"], "role": u.get("role", "member"), "name": u.get("name", u["username"])}
 
 def get_current_user_info(username: str = Depends(get_current_user)) -> dict:
     from backend.storage import get_user
