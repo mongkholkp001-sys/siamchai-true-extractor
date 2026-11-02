@@ -131,6 +131,9 @@ class SiamchaiCrawler:
             "--disable-gpu",
             "--disable-software-rasterizer",
             "--disable-features=IsolateOrigins,site-per-process",
+            "--disk-cache-size=10485760",
+            "--media-cache-size=10485760",
+            "--js-flags=--max-old-space-size=512",
         ]
         if os.name != "nt":
             args.extend(["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])

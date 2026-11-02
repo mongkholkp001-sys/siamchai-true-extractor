@@ -117,6 +117,9 @@ class TrueCrawler:
             "--disable-gpu",
             "--disable-software-rasterizer",
             "--disable-features=IsolateOrigins,site-per-process",
+            "--disk-cache-size=10485760",
+            "--media-cache-size=10485760",
+            "--js-flags=--max-old-space-size=512",
         ]
         if os.name != "nt":
             args.extend(["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
@@ -137,7 +140,7 @@ class TrueCrawler:
         else:
             self.driver = webdriver.Chrome(options=options)
 
-        self.driver.set_page_load_timeout(45)
+        self.driver.set_page_load_timeout(60)
         self.driver.implicitly_wait(3)
 
     def handle_popups_and_errors(self) -> bool:
@@ -243,6 +246,40 @@ class TrueCrawler:
         success = self.perform_login()
         if not success:
             raise RuntimeError("ไม่สามารถเข้าสู่ระบบ TrueCorp ได้ กรุณาตรวจสอบ Username / Password หรือการเชื่อมต่อ")
+
+    def recover_driver_session(self):
+        self.log("🔄 กำลังรีสตาร์ทเบราว์เซอร์ TrueCorp และเชื่อมต่อระบบใหม่อัตโนมัติ...")
+        self.close()
+        time.sleep(2)
+        self.login_and_prepare()
+
+    def recover_session_if_needed(self) -> bool:
+        if not self.driver:
+            self.recover_driver_session()
+            return True
+        try:
+            curr_url = self.driver.current_url.lower()
+        except Exception:
+            self.recover_driver_session()
+            return True
+
+        if "login" in curr_url or "signin" in curr_url:
+            self.log("⚠️ เซสชันทรูหลุดกลับหน้าล็อกอิน! กำลังเข้าสู่ระบบใหม่อัตโนมัติ...")
+            success = self.perform_login()
+            if not success:
+                self.recover_driver_session()
+            return True
+
+        # Check if landed somewhere outside pre-verify and verify-detail
+        if "pre-verify" not in curr_url and "verify-detail" not in curr_url:
+            try:
+                self.driver.get(TRUE_PREVERIFY_URL)
+                time.sleep(1)
+            except Exception:
+                self.recover_driver_session()
+                return True
+
+        return False
 
     def wait_for_verify_detail(self, timeout=8) -> bool:
         start_time = time.time()
@@ -371,6 +408,8 @@ class TrueCrawler:
                 "phones": "-"
             }
 
+        self.recover_session_if_needed()
+
         for attempt in range(1, 3):
             try:
                 # 1. หากยังอยู่ที่หน้าผลลัพธ์เดิม ให้กดปุ่มย้อนกลับทันที
@@ -396,7 +435,7 @@ class TrueCrawler:
                 self.handle_popups_and_errors()
 
                 # 2. รอช่องกรอกเลข
-                wait = WebDriverWait(self.driver, 8)
+                wait = WebDriverWait(self.driver, 12)
                 input_box = wait.until(EC.presence_of_element_located((By.ID, "input_card_number")))
                 input_box.clear()
                 input_box.send_keys(cid_str)
@@ -410,10 +449,11 @@ class TrueCrawler:
                     self.driver.execute_script("arguments[0].click();", submit_btn)
 
                 # 4. รอหน้าผลลัพธ์โหลด
-                WebDriverWait(self.driver, 10).until(
+                WebDriverWait(self.driver, 15).until(
                     lambda d: "verify-detail" in d.current_url or 
                               len(d.find_elements(By.CSS_SELECTOR, 'svg[data-testid="KeyboardArrowDownRoundedIcon"]')) > 0 or
-                              len(d.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ')]")) > 0
+                              len(d.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ')]")) > 0 or
+                              any(k in d.page_source for k in ["ไม่พบข้อมูล", "ไม่พบรายการ", "ไม่มีข้อมูล", "ข้อผิดพลาด"])
                 )
 
                 # รอให้ข้อมูลสัญญาหรือลูกศรคลี่ตารางแสดงผลครบถ้วน
@@ -475,22 +515,15 @@ class TrueCrawler:
                     "phones": all_str
                 }
             except Exception as e:
-                if attempt == 2:
+                self.log(f"⚠️ ข้อผิดพลาดตรวจสอบทรู เลข {cid_str} (รอบ {attempt}): {e}")
+                if attempt < 2:
+                    try:
+                        self.recover_driver_session()
+                    except Exception as rec_err:
+                        self.log(f"⚠️ รีสตาร์ทเบราว์เซอร์ทรู: {rec_err}")
+                    time.sleep(1.5)
+                else:
                     raise e
-                time.sleep(1)
-
-            except Exception as e:
-                self.log(f"ข้อผิดพลาดทรู (รอบ {attempt}): {e}")
-                time.sleep(0.5)
-
-        return {
-            "cid": cid_str,
-            "status": "ไม่พบข้อมูล/ผิดพลาด",
-            "active_count": 0,
-            "active_phones": "-",
-            "all_phones": "-",
-            "phone_details": "-"
-        }
 
     def close(self):
         if self.driver:

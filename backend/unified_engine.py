@@ -180,6 +180,14 @@ def siamchai_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: 
                 job.sc_current_index = i
                 job.sc_current_cid = cid
 
+            # Periodic driver recycling every 60 queries to prevent memory leaks / browser freeze
+            if i > 1 and (i - 1) % 60 == 0:
+                job.add_log(f"🧹 [สยามชัย] เคลียร์หน่วยความจำเบราว์เซอร์อัตโนมัติ (ครบ {i-1} รายการ) เพื่อคงความเร็วและความเสถียร...")
+                try:
+                    sc_crawler.recover_driver_session()
+                except Exception as rec_err:
+                    job.add_log(f"⚠️ เคลียร์หน่วยความจำเบราว์เซอร์สยามชัย: {rec_err}")
+
             res = None
             max_attempts = 3
             for attempt in range(1, max_attempts + 1):
@@ -297,20 +305,26 @@ def true_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict
                 job.tr_current_index = i
                 job.tr_current_cid = cid
 
+            # Periodic driver recycling every 60 queries to prevent memory leaks / browser freeze
+            if i > 1 and (i - 1) % 60 == 0:
+                job.add_log(f"🧹 [ทรู] เคลียร์หน่วยความจำเบราว์เซอร์อัตโนมัติ (ครบ {i-1} รายการ) เพื่อคงความเร็วและความเสถียร...")
+                try:
+                    tr_crawler.recover_driver_session()
+                except Exception as rec_err:
+                    job.add_log(f"⚠️ เคลียร์หน่วยความจำเบราว์เซอร์ทรู: {rec_err}")
+
             res = None
             max_attempts = 3
             for attempt in range(1, max_attempts + 1):
                 if job.stop_requested:
                     break
                 try:
-                    # Health check: if driver dead or None, recover
-                    if not tr_crawler.driver:
-                        tr_crawler.create_driver()
-                        tr_crawler.login_and_prepare()
+                    # Health check: if driver dead or None or logged out, recover
+                    tr_crawler.recover_session_if_needed()
 
                     res = tr_crawler.search_one(cid)
                     st = str(res.get("status", ""))
-                    if st.startswith("Error") or "invalid session id" in st.lower():
+                    if st.startswith("Error") or "invalid session id" in st.lower() or "ผิดพลาด" in st:
                         raise RuntimeError(st)
 
                     break
@@ -323,13 +337,11 @@ def true_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict
                     ])
                     if attempt < max_attempts and not job.stop_requested:
                         job.add_log(f"⚠️ [ทรู {i}/{total}] เลข {cid} ขัดข้อง ({err_msg[:60]}) -> กำลังรีเช็กใหม่อัตโนมัติ (ครั้งที่ {attempt+1}/{max_attempts})...")
-                        if is_fatal_driver_err:
-                            try:
-                                tr_crawler.create_driver()
-                                tr_crawler.login_and_prepare()
-                            except Exception as rec_e:
-                                job.add_log(f"⚠️ รีสตาร์ทเบราว์เซอร์ทรูไม่สำเร็จ: {rec_e}")
-                                time.sleep(3)
+                        try:
+                            tr_crawler.recover_driver_session()
+                        except Exception as rec_e:
+                            job.add_log(f"⚠️ รีสตาร์ทเบราว์เซอร์ทรูไม่สำเร็จ: {rec_e}")
+                            time.sleep(3)
                         time.sleep(1.5)
                     else:
                         job.add_log(f"❌ [ทรู {i}/{total}] เลข {cid} ตรวจสอบครบ {max_attempts} ครั้งแล้ว: {err_msg[:80]}")
@@ -401,18 +413,27 @@ def true_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict
 
 class JobQueueManager:
     """
-    Multi-tenant Concurrent Job Manager:
-    Allows each user to run their own search jobs independently and simultaneously.
-    No waiting in queue across different users.
-    Each user runs their own headless browser instances with isolated profiles.
+    Managed Multi-tenant Job Queue Manager:
+    Safely queues jobs to prevent CPU/RAM overload (max 1 active crawler session on the server).
+    Ensures 100% stability without browser crashes or session collisions.
+    Displays real-time queue position to users while their job waits.
     """
-    def __init__(self):
+    def __init__(self, max_concurrent: int = 1):
         self.lock = threading.Lock()
         self.jobs: Dict[str, UnifiedJobState] = {}
         # Track active job ID per user (user_lower -> job_id)
         self.user_active_jobs: Dict[str, str] = {}
         # Track active worker threads per job_id
         self.active_threads: Dict[str, threading.Thread] = {}
+        self.execution_semaphore = threading.Semaphore(max_concurrent)
+        self.waiting_queue: List[str] = []
+
+    def _update_queue_positions(self):
+        for idx, jid in enumerate(self.waiting_queue, 1):
+            if jid in self.jobs:
+                with self.jobs[jid].lock:
+                    if self.jobs[jid].status == "queued":
+                        self.jobs[jid].queue_position = idx
 
     def submit_job(
         self,
@@ -425,13 +446,13 @@ class JobQueueManager:
         with self.lock:
             user_key = user.strip().lower()
 
-            # Prevent double click on the same user account while actively running
+            # Prevent double click on the same user account while actively running or queued
             if user_key in self.user_active_jobs:
                 existing_id = self.user_active_jobs[user_key]
                 existing = self.jobs.get(existing_id)
-                if existing and existing.status in ["running", "starting"]:
+                if existing and existing.status in ["running", "starting", "queued"]:
                     raise ValueError(
-                        f"บัญชี '{user}' กำลังมีงานค้นหากำลังทำงานอยู่ ({existing.total} รายการ) "
+                        f"บัญชี '{user}' กำลังมีงานค้นหากำลังทำงานหรืออยู่ในคิว ({existing.total} รายการ) "
                         "กรุณารอให้งานเดิมเสร็จสิ้น หรือกดปุ่ม 'หยุดการทำงาน' ก่อนเริ่มงานใหม่"
                     )
 
@@ -443,16 +464,21 @@ class JobQueueManager:
             job.total = len(cids)
             job.headless = headless
             job.created_at = time.time()
-            job.status = "starting"
-            job.queue_position = 0
+            job.status = "queued"
+
+            self.waiting_queue.append(job_id)
+            job.queue_position = len(self.waiting_queue)
 
             self.jobs[job_id] = job
             self.user_active_jobs[user_key] = job_id
 
-            job.add_log(f"🚀 เริ่มค้นหาข้อมูล {len(cids)} รายการ (โหมด: {mode}) โดยผู้ใช้: {user}")
-            job.add_log("⚡ ระบบประมวลผลแยกอิสระทันที (Concurrent Mode - ไม่ต้องรอคิวใคร)")
+            job.add_log(f"📥 ได้รับคำสั่งค้นหาข้อมูล {len(cids)} รายการ (โหมด: {mode}) โดยผู้ใช้: {user}")
+            if job.queue_position > 1:
+                job.add_log(f"⏳ เข้าสู่คิวประมวลผล (ลำดับคิวที่ {job.queue_position}) กำลังรอให้งานก่อนหน้าเสร็จสิ้น...")
+            else:
+                job.add_log("⚡ พร้อมเริ่มทำงานทันที...")
 
-            # Launch dedicated worker thread for this job immediately!
+            # Launch dedicated worker thread which will acquire semaphore
             t = threading.Thread(target=self._run_job_wrapper, args=(job,), daemon=True)
             self.active_threads[job_id] = t
             t.start()
@@ -461,13 +487,33 @@ class JobQueueManager:
 
     def _run_job_wrapper(self, job: UnifiedJobState):
         try:
-            self._execute_job(job)
+            with self.execution_semaphore:
+                with self.lock:
+                    if job.job_id in self.waiting_queue:
+                        self.waiting_queue.remove(job.job_id)
+                    self._update_queue_positions()
+
+                if job.stop_requested:
+                    with job.lock:
+                        job.status = "stopped"
+                    job.add_log("🛑 งานถูกยกเลิกก่อนเริ่มทำงาน")
+                    return
+
+                with job.lock:
+                    job.status = "starting"
+                    job.queue_position = 0
+                job.add_log("🚀 ถึงคิวประมวลผลแล้ว! กำลังเปิดระบบและเริ่มค้นหาข้อมูล...")
+
+                self._execute_job(job)
         except Exception as e:
             job.add_log(f"❌ เกิดข้อผิดพลาดในการประมวลผลงาน: {e}")
             with job.lock:
                 job.status = "error"
         finally:
             with self.lock:
+                if job.job_id in self.waiting_queue:
+                    self.waiting_queue.remove(job.job_id)
+                self._update_queue_positions()
                 if job.job_id in self.active_threads:
                     del self.active_threads[job.job_id]
 
@@ -526,8 +572,13 @@ class JobQueueManager:
             if not is_admin and not is_owner:
                 return False
 
-            if target_job.status in ["running", "starting"]:
+            if target_job.status in ["running", "starting", "queued"]:
                 target_job.stop_requested = True
+                if target_job.status == "queued":
+                    target_job.status = "stopped"
+                    if target_job.job_id in self.waiting_queue:
+                        self.waiting_queue.remove(target_job.job_id)
+                    self._update_queue_positions()
                 if target_job.siamchai_crawler:
                     target_job.siamchai_crawler.stop_requested = True
                 if target_job.true_crawler:

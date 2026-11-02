@@ -496,7 +496,7 @@ function syncServerLogs(logs) {
   terminalLogs.scrollTop = terminalLogs.scrollHeight;
 }
 
-function updateStatusBadge(el, status) {
+function updateStatusBadge(el, status, queuePos) {
   if (!el) return;
   if (status === 'running') {
     el.textContent = 'กำลังค้นหา (RUNNING)';
@@ -505,8 +505,8 @@ function updateStatusBadge(el, status) {
     el.textContent = 'กำลังเปิดระบบ... (STARTING)';
     el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30 animate-pulse';
   } else if (status === 'queued') {
-    el.textContent = 'ในคิว (QUEUED)';
-    el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30';
+    el.textContent = `รอคิวประมวลผล (คิวที่ ${queuePos || 1})`;
+    el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30 animate-pulse';
   } else if (status === 'done') {
     el.textContent = 'เสร็จสิ้น (DONE)';
     el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
@@ -523,9 +523,11 @@ function updateStatusBadge(el, status) {
 }
 
 function updateUI(data) {
+  const isQueued = (data.status === 'queued');
   const isBusy = (
     data.status === 'running' ||
     data.status === 'starting' ||
+    isQueued ||
     data.sc_status === 'running' ||
     data.sc_status === 'starting' ||
     data.tr_status === 'running' ||
@@ -533,18 +535,23 @@ function updateUI(data) {
   );
   isJobRunning = isBusy;
 
-  if (isBusy) {
+  if (isQueued) {
     btnStart.disabled = true;
-    btnStart.innerHTML = `<span class="inline-block animate-spin mr-1">⏳</span><span>กำลังค้นหาข้อมูล (แยกค้นอิสระ)...</span>`;
+    btnStart.innerHTML = `<span class="inline-block animate-spin mr-1">⏳</span><span>รอคิวประมวลผล (คิวที่ ${data.queue_position || 1})...</span>`;
+    btnStop.disabled = false;
+  } else if (isBusy) {
+    btnStart.disabled = true;
+    btnStart.innerHTML = `<span class="inline-block animate-spin mr-1">⚡</span><span>กำลังค้นหาข้อมูล (ทำงานอัตโนมัติ)...</span>`;
     btnStop.disabled = false;
   } else {
     btnStart.disabled = false;
-    btnStart.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><span>เริ่มค้นหาข้อมูลทันที (แยกค้นอิสระ)</span>`;
+    btnStart.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><span>เริ่มค้นหาข้อมูล</span>`;
     btnStop.disabled = true;
   }
 
   // 1. Siamchai Card Update
-  updateStatusBadge(scStatusPill, data.sc_status);
+  const scStatusToRender = isQueued ? 'queued' : data.sc_status;
+  updateStatusBadge(scStatusPill, scStatusToRender, data.queue_position);
   scProgressInfo.textContent = `${data.sc_current_index || 0} / ${data.total || 0} รายการ`;
   scProgressPercent.textContent = `${data.sc_percent || 0}%`;
   scProgressBar.style.width = `${data.sc_percent || 0}%`;
@@ -562,7 +569,8 @@ function updateUI(data) {
   }
 
   // 2. TrueCorp Card Update
-  updateStatusBadge(trStatusPill, data.tr_status);
+  const trStatusToRender = isQueued ? 'queued' : data.tr_status;
+  updateStatusBadge(trStatusPill, trStatusToRender, data.queue_position);
   trProgressInfo.textContent = `${data.tr_current_index || 0} / ${data.total || 0} รายการ`;
   trProgressPercent.textContent = `${data.tr_percent || 0}%`;
   trProgressBar.style.width = `${data.tr_percent || 0}%`;
