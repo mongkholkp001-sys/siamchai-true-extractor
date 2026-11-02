@@ -25,6 +25,7 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
+JOBS_FILE = os.path.join(DATA_DIR, "jobs_history.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -206,6 +207,78 @@ def delete_user(username: str, current_admin: str):
         raise ValueError(f"ไม่พบผู้ใช้ '{username}'")
     save_users(new_users)
     return True
+
+# ------------------ Persistent Job History (Auto-retain 3 days) ------------------
+def load_jobs_history() -> dict:
+    if os.path.exists(JOBS_FILE):
+        try:
+            with open(JOBS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+    return {}
+
+def save_jobs_history(jobs_dict: dict) -> bool:
+    try:
+        temp_file = JOBS_FILE + ".tmp"
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(jobs_dict, f, indent=2, ensure_ascii=False)
+        if os.path.exists(JOBS_FILE):
+            try:
+                os.remove(JOBS_FILE)
+            except Exception:
+                pass
+        os.rename(temp_file, JOBS_FILE)
+        return True
+    except Exception as e:
+        print(f"Error saving jobs history: {e}")
+        return False
+
+def cleanup_old_jobs(jobs_dict: dict, max_age_days: int = 3) -> dict:
+    """
+    Purge jobs and generated Excel files older than max_age_days (3 days / 72 hours).
+    """
+    now = time.time()
+    cutoff = now - (max_age_days * 86400)
+    cleaned = {}
+    changed = False
+
+    for job_id, job_data in jobs_dict.items():
+        created_at = job_data.get("created_at", 0)
+        if created_at < cutoff:
+            changed = True
+            for fkey in ["sc_excel_path", "tr_excel_path", "combined_excel_path"]:
+                fpath = job_data.get(fkey)
+                if fpath and os.path.exists(fpath):
+                    try:
+                        os.remove(fpath)
+                    except Exception:
+                        pass
+        else:
+            cleaned[job_id] = job_data
+
+    # Also clean orphaned Excel files in results folder older than cutoff
+    if os.path.exists(RESULTS_DIR):
+        try:
+            for fname in os.listdir(RESULTS_DIR):
+                if fname.endswith(".xlsx"):
+                    fpath = os.path.join(RESULTS_DIR, fname)
+                    if os.path.isfile(fpath):
+                        mtime = os.path.getmtime(fpath)
+                        if mtime < cutoff:
+                            try:
+                                os.remove(fpath)
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+
+    if changed:
+        save_jobs_history(cleaned)
+
+    return cleaned
 
 def parse_cids_from_text(text: str):
     """Extract 13-digit Thai national IDs or numbers from text"""

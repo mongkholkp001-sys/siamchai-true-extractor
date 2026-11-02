@@ -9,7 +9,10 @@ from backend.storage import (
     save_combined_results_to_excel,
     save_siamchai_results_to_excel,
     save_true_results_to_excel,
-    load_config
+    load_config,
+    load_jobs_history,
+    save_jobs_history,
+    cleanup_old_jobs
 )
 
 class UnifiedJobState:
@@ -147,6 +150,68 @@ class UnifiedJobState:
                 "stop_requested": self.stop_requested
             }
 
+    def to_storage_dict(self) -> dict:
+        with self.lock:
+            return {
+                "job_id": self.job_id,
+                "user": self.user,
+                "job_name": self.job_name,
+                "mode": self.mode,
+                "status": self.status,
+                "queue_position": self.queue_position,
+                "total": self.total,
+                "cids": self.cids,
+                "headless": self.headless,
+                "sc_status": self.sc_status,
+                "sc_current_index": self.sc_current_index,
+                "sc_current_cid": self.sc_current_cid,
+                "sc_results": self.sc_results,
+                "sc_excel_path": self.sc_excel_path,
+                "sc_error": self.sc_error,
+                "tr_status": self.tr_status,
+                "tr_current_index": self.tr_current_index,
+                "tr_current_cid": self.tr_current_cid,
+                "tr_results": self.tr_results,
+                "tr_excel_path": self.tr_excel_path,
+                "tr_error": self.tr_error,
+                "combined_excel_path": self.combined_excel_path,
+                "logs": self.logs[-60:],
+                "created_at": self.created_at,
+                "start_time": self.start_time,
+                "end_time": self.end_time,
+                "stop_requested": self.stop_requested
+            }
+
+    @classmethod
+    def from_storage_dict(cls, d: dict) -> "UnifiedJobState":
+        job = cls(user=d.get("user", "admin"), job_id=d.get("job_id"))
+        job.job_name = d.get("job_name", "search_job")
+        job.mode = d.get("mode", "both")
+        job.status = d.get("status", "done")
+        job.queue_position = d.get("queue_position", 0)
+        job.total = d.get("total", 0)
+        job.cids = d.get("cids", [])
+        job.headless = d.get("headless", True)
+        job.sc_status = d.get("sc_status", "idle")
+        job.sc_current_index = d.get("sc_current_index", 0)
+        job.sc_current_cid = d.get("sc_current_cid", "")
+        job.sc_results = d.get("sc_results", {})
+        job.sc_excel_path = d.get("sc_excel_path")
+        job.sc_error = d.get("sc_error")
+        job.tr_status = d.get("tr_status", "idle")
+        job.tr_current_index = d.get("tr_current_index", 0)
+        job.tr_current_cid = d.get("tr_current_cid", "")
+        job.tr_results = d.get("tr_results", {})
+        job.tr_excel_path = d.get("tr_excel_path")
+        job.tr_error = d.get("tr_error")
+        job.combined_excel_path = d.get("combined_excel_path")
+        job.logs = d.get("logs", [])
+        job.created_at = d.get("created_at", time.time())
+        job.start_time = d.get("start_time")
+        job.end_time = d.get("end_time")
+        job.stop_requested = d.get("stop_requested", False)
+        return job
+
 
 def siamchai_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict):
     sc_crawler = None
@@ -264,6 +329,10 @@ def siamchai_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: 
                 with job.lock:
                     job.sc_excel_path = sc_file
                 job.add_log(f"🟣 [สยามชัย] 💾 บันทึกไฟล์ Excel สยามชัยเรียบร้อย: {os.path.basename(sc_file)} (พร้อมดาวน์โหลด)")
+                try:
+                    job_manager._persist_job(job)
+                except Exception:
+                    pass
             except Exception as e:
                 job.add_log(f"🟣 [สยามชัย] ❌ สร้าง Excel สยามชัยไม่สำเร็จ: {e}")
 
@@ -402,6 +471,10 @@ def true_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict
                 with job.lock:
                     job.tr_excel_path = tr_file
                 job.add_log(f"🔴 [ทรู] 💾 บันทึกไฟล์ Excel ทรูเรียบร้อย: {os.path.basename(tr_file)} (พร้อมดาวน์โหลด)")
+                try:
+                    job_manager._persist_job(job)
+                except Exception:
+                    pass
             except Exception as e:
                 job.add_log(f"🔴 [ทรู] ❌ สร้าง Excel ทรูไม่สำเร็จ: {e}")
 
@@ -417,6 +490,7 @@ class JobQueueManager:
     Safely queues jobs to prevent CPU/RAM overload (max 1 active crawler session on the server).
     Ensures 100% stability without browser crashes or session collisions.
     Displays real-time queue position to users while their job waits.
+    Automatically persists and retains all search jobs & Excel files for 3 days!
     """
     def __init__(self, max_concurrent: int = 1):
         self.lock = threading.Lock()
@@ -427,6 +501,35 @@ class JobQueueManager:
         self.active_threads: Dict[str, threading.Thread] = {}
         self.execution_semaphore = threading.Semaphore(max_concurrent)
         self.waiting_queue: List[str] = []
+
+        # Load existing jobs from disk and auto-purge jobs older than 3 days
+        self._load_and_cleanup_history()
+
+    def _load_and_cleanup_history(self):
+        try:
+            raw_jobs = load_jobs_history()
+            cleaned = cleanup_old_jobs(raw_jobs, max_age_days=3)
+            # Sort chronologically so newest overrides user_active_jobs
+            sorted_items = sorted(cleaned.items(), key=lambda item: item[1].get("created_at", 0))
+            for jid, jdata in sorted_items:
+                try:
+                    job = UnifiedJobState.from_storage_dict(jdata)
+                    self.jobs[jid] = job
+                    u_key = job.user.strip().lower()
+                    self.user_active_jobs[u_key] = jid
+                except Exception as parse_e:
+                    print(f"Error parsing saved job {jid}: {parse_e}")
+        except Exception as e:
+            print(f"Error loading jobs history: {e}")
+
+    def _persist_job(self, job: UnifiedJobState):
+        try:
+            raw_jobs = load_jobs_history()
+            cleaned = cleanup_old_jobs(raw_jobs, max_age_days=3)
+            cleaned[job.job_id] = job.to_storage_dict()
+            save_jobs_history(cleaned)
+        except Exception as e:
+            print(f"Error persisting job {job.job_id}: {e}")
 
     def _update_queue_positions(self):
         for idx, jid in enumerate(self.waiting_queue, 1):
@@ -478,6 +581,9 @@ class JobQueueManager:
             else:
                 job.add_log("⚡ พร้อมเริ่มทำงานทันที...")
 
+            # Persist job state to 3-day history
+            self._persist_job(job)
+
             # Launch dedicated worker thread which will acquire semaphore
             t = threading.Thread(target=self._run_job_wrapper, args=(job,), daemon=True)
             self.active_threads[job_id] = t
@@ -497,18 +603,21 @@ class JobQueueManager:
                     with job.lock:
                         job.status = "stopped"
                     job.add_log("🛑 งานถูกยกเลิกก่อนเริ่มทำงาน")
+                    self._persist_job(job)
                     return
 
                 with job.lock:
                     job.status = "starting"
                     job.queue_position = 0
                 job.add_log("🚀 ถึงคิวประมวลผลแล้ว! กำลังเปิดระบบและเริ่มค้นหาข้อมูล...")
+                self._persist_job(job)
 
                 self._execute_job(job)
         except Exception as e:
             job.add_log(f"❌ เกิดข้อผิดพลาดในการประมวลผลงาน: {e}")
             with job.lock:
                 job.status = "error"
+            self._persist_job(job)
         finally:
             with self.lock:
                 if job.job_id in self.waiting_queue:
@@ -538,10 +647,20 @@ class JobQueueManager:
 
     def get_job_by_id(self, job_id: str) -> Optional[UnifiedJobState]:
         with self.lock:
+            if job_id not in self.jobs:
+                raw_jobs = load_jobs_history()
+                if job_id in raw_jobs:
+                    try:
+                        self.jobs[job_id] = UnifiedJobState.from_storage_dict(raw_jobs[job_id])
+                    except Exception:
+                        pass
             return self.jobs.get(job_id)
 
-    def get_user_jobs_history(self, user: str, limit: int = 40) -> List[Dict]:
+    def get_user_jobs_history(self, user: str, limit: int = 50) -> List[Dict]:
         with self.lock:
+            # Refresh history from disk and auto-purge jobs older than 3 days
+            self._load_and_cleanup_history()
+
             if user.strip().lower() == "admin":
                 # Admin can see all jobs across all users
                 jobs = list(self.jobs.values())
@@ -584,6 +703,7 @@ class JobQueueManager:
                 if target_job.true_crawler:
                     target_job.true_crawler.stop_requested = True
                 target_job.add_log(f"🛑 ได้รับคำสั่งหยุดการทำงานจาก {user}...")
+                self._persist_job(target_job)
                 return True
 
             return False
@@ -671,6 +791,7 @@ class JobQueueManager:
                 job.add_log(f"❌ สร้างไฟล์รวมไม่สำเร็จ: {e}")
 
         job.add_log("🎉 กระบวนการทั้งหมดเสร็จสิ้น สามารถดาวน์โหลดไฟล์แยกตามระบบหรือไฟล์รวมได้ทันที!")
+        self._persist_job(job)
 
 
 # Global Job Queue Manager Singleton
