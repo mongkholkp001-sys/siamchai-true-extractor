@@ -17,7 +17,7 @@ from backend.storage import (
 
 class UnifiedJobState:
     def __init__(self, user: str = "admin", job_id: Optional[str] = None):
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.job_id: str = job_id or f"job_{int(time.time())}_{user}"
         self.user: str = user
         self.job_name: str = "search_job"
@@ -510,7 +510,7 @@ class JobQueueManager:
     Automatically persists and retains all search jobs & Excel files for 3 days!
     """
     def __init__(self, max_concurrent: int = 3):
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.jobs: Dict[str, UnifiedJobState] = {}
         # Track active job ID per user (user_lower -> job_id)
         self.user_active_jobs: Dict[str, str] = {}
@@ -600,7 +600,8 @@ class JobQueueManager:
 
             # Auto-Resume Checkpoint Detection:
             # Check if this user had a prior job with partial results for these CIDs
-            recent_job = self.get_user_current_job(user)
+            old_id = self.user_active_jobs.get(user_key)
+            recent_job = self.jobs.get(old_id) if old_id else None
             inherited_count = 0
             if recent_job and recent_job.status in ["stopped", "error"]:
                 for c in cids:
@@ -628,15 +629,15 @@ class JobQueueManager:
             else:
                 job.add_log("⚡ พร้อมเริ่มทำงานทันที...")
 
-            # Persist job state to 3-day history
-            self._persist_job(job)
-
             # Launch dedicated worker thread which will acquire semaphore
             t = threading.Thread(target=self._run_job_wrapper, args=(job,), daemon=True)
             self.active_threads[job_id] = t
             t.start()
 
-            return job
+        # Persist job state to 3-day history outside of self.lock
+        self._persist_job(job)
+
+        return job
 
     def _run_job_wrapper(self, job: UnifiedJobState):
         try:
@@ -725,8 +726,8 @@ class JobQueueManager:
             return [j.to_dict() for j in jobs[:limit]]
 
     def stop_job(self, user: str, job_id: Optional[str] = None) -> bool:
+        target_job = None
         with self.lock:
-            target_job = None
             if job_id and job_id in self.jobs:
                 target_job = self.jobs[job_id]
             else:
@@ -757,10 +758,12 @@ class JobQueueManager:
                 if target_job.true_crawler:
                     target_job.true_crawler.stop_requested = True
                 target_job.add_log(f"🛑 ได้รับคำสั่งหยุดการทำงานจาก {user}...")
-                self._persist_job(target_job)
-                return True
 
-            return False
+        if target_job:
+            self._persist_job(target_job)
+            return True
+
+        return False
 
     def _execute_job(self, job: UnifiedJobState):
         cfg = load_config()
@@ -775,19 +778,21 @@ class JobQueueManager:
             job.end_time = None
             job.stop_requested = False
 
-            # Reset Siamchai state
+            # Reset Siamchai state (preserve inherited resumed results if any)
             job.sc_status = "starting" if mode in ["both", "siamchai"] else "idle"
-            job.sc_current_index = 0
+            job.sc_current_index = len(job.sc_results) if job.sc_results else 0
             job.sc_current_cid = ""
-            job.sc_results = {}
+            if not job.sc_results:
+                job.sc_results = {}
             job.sc_excel_path = None
             job.sc_error = None
 
-            # Reset True state
+            # Reset True state (preserve inherited resumed results if any)
             job.tr_status = "starting" if mode in ["both", "true"] else "idle"
-            job.tr_current_index = 0
+            job.tr_current_index = len(job.tr_results) if job.tr_results else 0
             job.tr_current_cid = ""
-            job.tr_results = {}
+            if not job.tr_results:
+                job.tr_results = {}
             job.tr_excel_path = None
             job.tr_error = None
 
