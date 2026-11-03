@@ -17,14 +17,25 @@ if (document.getElementById('user-display')) {
 }
 
 async function initCurrentUser() {
+  const btnUsersMgmt = document.getElementById('btn-users-mgmt');
+  const btnSettings = document.getElementById('btn-settings');
+
+  // Immediately show admin buttons if logged-in user is admin
+  if (authUser.toLowerCase() === 'admin') {
+    if (btnUsersMgmt) btnUsersMgmt.classList.remove('hidden');
+    if (btnSettings) btnSettings.classList.remove('hidden');
+  }
+
   try {
+    const headers = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
     const res = await fetch('/api/auth/me', {
-      headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+      headers: headers,
       credentials: 'same-origin'
     });
     if (res.ok) {
       const data = await res.json();
-      currentUserRole = data.role || 'member';
+      currentUserRole = data.role || (authUser.toLowerCase() === 'admin' ? 'admin' : 'member');
       const uDisp = document.getElementById('user-display');
       const rBadge = document.getElementById('role-badge');
       if (uDisp) uDisp.textContent = data.name || data.username || authUser;
@@ -36,15 +47,12 @@ async function initCurrentUser() {
       }
 
       // Show/Hide admin buttons
-      const btnUsersMgmt = document.getElementById('btn-users-mgmt');
-      const btnSettings = document.getElementById('btn-settings');
-      if (btnUsersMgmt) {
-        if (currentUserRole === 'admin') btnUsersMgmt.classList.remove('hidden');
-        else btnUsersMgmt.classList.add('hidden');
-      }
-      if (btnSettings) {
-        if (currentUserRole === 'admin') btnSettings.classList.remove('hidden');
-        else btnSettings.classList.add('hidden');
+      if (currentUserRole === 'admin') {
+        if (btnUsersMgmt) btnUsersMgmt.classList.remove('hidden');
+        if (btnSettings) btnSettings.classList.remove('hidden');
+      } else {
+        if (btnUsersMgmt) btnUsersMgmt.classList.add('hidden');
+        if (btnSettings) btnSettings.classList.add('hidden');
       }
     }
   } catch (err) {
@@ -842,6 +850,17 @@ async function loadUsersList() {
 
 if (btnUsersMgmt) {
   btnUsersMgmt.addEventListener('click', () => {
+    if (modalUsers) {
+      modalUsers.classList.remove('hidden');
+      loadUsersList();
+    }
+  });
+}
+
+const btnOpenUsersFromSettings = document.getElementById('btn-open-users-from-settings');
+if (btnOpenUsersFromSettings) {
+  btnOpenUsersFromSettings.addEventListener('click', () => {
+    if (modalSettings) modalSettings.classList.add('hidden');
     if (modalUsers) {
       modalUsers.classList.remove('hidden');
       loadUsersList();
