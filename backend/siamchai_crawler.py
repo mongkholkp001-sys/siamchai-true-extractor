@@ -711,7 +711,7 @@ class SiamchaiCrawler:
 
     def search_one(self, cid: str) -> Dict[str, str]:
         cid_str = str(cid).strip()
-        if not cid_str:
+        if not cid_str or self.stop_requested:
             return self.make_not_found(cid)
 
         self.recover_session_if_needed()

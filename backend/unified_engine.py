@@ -245,6 +245,14 @@ def siamchai_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: 
                 job.sc_current_index = i
                 job.sc_current_cid = cid
 
+            # Check if this CID was already searched (Auto-Resume / Checkpoint)
+            existing = job.sc_results.get(cid)
+            if existing and not str(existing.get("สถานะ", "")).startswith("Error"):
+                name = existing.get("ชื่อ-นามสกุล", "-")
+                status = existing.get("สถานะ", "-")
+                job.add_log(f"🟣 [สยามชัย {i}/{total}] เลข {cid}: (ข้อมูลเดิม) {name} ({status})")
+                continue
+
             # Periodic driver recycling every 60 queries to prevent memory leaks / browser freeze
             if i > 1 and (i - 1) % 60 == 0:
                 job.add_log(f"🧹 [สยามชัย] เคลียร์หน่วยความจำเบราว์เซอร์อัตโนมัติ (ครบ {i-1} รายการ) เพื่อคงความเร็วและความเสถียร...")
@@ -373,6 +381,15 @@ def true_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict
             with job.lock:
                 job.tr_current_index = i
                 job.tr_current_cid = cid
+
+            # Check if this CID was already searched (Auto-Resume / Checkpoint)
+            existing = job.tr_results.get(cid)
+            if existing and not str(existing.get("status", "")).startswith("Error"):
+                total_cnt = existing.get("total_count", existing.get("count", 0))
+                all_phones = existing.get("all_phones", "-")
+                active_cnt = existing.get("active_count", 0)
+                job.add_log(f"🔴 [ทรู {i}/{total}] เลข {cid}: (ข้อมูลเดิม) พบ {total_cnt} เบอร์ ({all_phones}) [Active: {active_cnt}]")
+                continue
 
             # Periodic driver recycling every 60 queries to prevent memory leaks / browser freeze
             if i > 1 and (i - 1) % 60 == 0:
@@ -581,6 +598,22 @@ class JobQueueManager:
             job.created_at = time.time()
             job.status = "queued"
 
+            # Auto-Resume Checkpoint Detection:
+            # Check if this user had a prior job with partial results for these CIDs
+            recent_job = self.get_user_current_job(user)
+            inherited_count = 0
+            if recent_job and recent_job.status in ["stopped", "error"]:
+                for c in cids:
+                    if c in recent_job.sc_results:
+                        st = str(recent_job.sc_results[c].get("สถานะ", ""))
+                        if not st.startswith("Error"):
+                            job.sc_results[c] = recent_job.sc_results[c]
+                    if c in recent_job.tr_results:
+                        st = str(recent_job.tr_results[c].get("status", ""))
+                        if not st.startswith("Error"):
+                            job.tr_results[c] = recent_job.tr_results[c]
+                inherited_count = max(len(job.sc_results), len(job.tr_results))
+
             self.waiting_queue.append(job_id)
             job.queue_position = len(self.waiting_queue)
 
@@ -588,6 +621,8 @@ class JobQueueManager:
             self.user_active_jobs[user_key] = job_id
 
             job.add_log(f"📥 ได้รับคำสั่งค้นหาข้อมูล {len(cids)} รายการ (โหมด: {mode}) โดยผู้ใช้: {user}")
+            if inherited_count > 0:
+                job.add_log(f"🔄 ตรวจพบข้อมูลเดิมที่ดึงสำเร็จแล้ว {inherited_count} รายการ -> ระบบจะดึงต่ออัตโนมัติ (ไม่ต้องเริ่มนับ 1 ใหม่!)")
             if job.queue_position > 1:
                 job.add_log(f"⏳ เข้าสู่คิวประมวลผล (ลำดับคิวที่ {job.queue_position}) กำลังรอให้งานก่อนหน้าเสร็จสิ้น...")
             else:

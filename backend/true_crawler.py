@@ -395,10 +395,10 @@ class TrueCrawler:
 
     def search_one(self, cid: str) -> Dict[str, any]:
         cid_str = str(cid).strip()
-        if not cid_str:
+        if not cid_str or self.stop_requested:
             return {
                 "cid": cid_str,
-                "status": "ไม่พบข้อมูล",
+                "status": "หยุดการทำงาน" if self.stop_requested else "ไม่พบข้อมูล",
                 "total_count": 0,
                 "all_phones": "-",
                 "active_count": 0,
@@ -411,6 +411,8 @@ class TrueCrawler:
         self.recover_session_if_needed()
 
         for attempt in range(1, 3):
+            if self.stop_requested:
+                break
             try:
                 # 1. หากยังอยู่ที่หน้าผลลัพธ์เดิม ให้กดปุ่มย้อนกลับทันที
                 if "verify-detail" in self.driver.current_url:

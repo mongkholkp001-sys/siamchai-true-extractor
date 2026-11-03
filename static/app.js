@@ -248,11 +248,17 @@ btnStart.addEventListener('click', async () => {
 
 btnStop.addEventListener('click', async () => {
   btnStop.disabled = true;
+  btnStop.innerHTML = `<span class="inline-block animate-spin mr-1">🛑</span><span>กำลังสั่งหยุดการทำงานทันที...</span>`;
+  updateStatusBadge(document.getElementById('badgeJobStatus'), 'stopped');
   try {
-    await fetch('/api/stop', {
+    const res = await fetch('/api/stop', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
+    if (res.ok) {
+      btnStop.innerHTML = `<svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><span>สั่งหยุดสำเร็จแล้ว</span>`;
+      syncServerLogs(['🛑 ส่งคำสั่งหยุดการทำงานเรียบร้อยแล้ว กำลังเซฟผลลัพธ์ล่าสุด...']);
+    }
   } catch (err) {
     console.error(err);
   }
