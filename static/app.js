@@ -701,28 +701,34 @@ const usersTableBody = document.getElementById('users-table-body');
 
 async function loadUsersList() {
   if (!usersTableBody) return;
-  usersTableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-500">กำลังโหลดข้อมูลผู้ใช้...</td></tr>`;
+  usersTableBody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-slate-500">กำลังโหลดข้อมูลผู้ใช้...</td></tr>`;
   try {
+    const headers = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
     const res = await fetch('/api/users', {
-      headers: { 'Authorization': `Bearer ${authToken}` },
+      headers: headers,
       credentials: 'same-origin'
     });
     if (!res.ok) {
-      const err = await res.json();
-      usersTableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-400 font-semibold">${err.detail || 'ไม่สามารถโหลดรายชื่อผู้ใช้ได้'}</td></tr>`;
+      let errDetail = 'ไม่สามารถโหลดรายชื่อผู้ใช้ได้';
+      try {
+        const err = await res.json();
+        errDetail = err.detail || errDetail;
+      } catch (_) {}
+      usersTableBody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-rose-400 font-semibold">${errDetail}</td></tr>`;
       return;
     }
     const data = await res.json();
     const users = data.users || [];
     if (!users.length) {
-      usersTableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-500">ไม่พบข้อมูลผู้ใช้</td></tr>`;
+      usersTableBody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-slate-500">ไม่พบข้อมูลผู้ใช้</td></tr>`;
       return;
     }
     usersTableBody.innerHTML = '';
     users.forEach(u => {
       const tr = document.createElement('tr');
       tr.className = 'hover:bg-slate-900/50 transition-colors';
-      const isCurrent = u.username.toLowerCase() === authUser.toLowerCase();
+      const isCurrent = (u.username || '').toLowerCase() === (authUser || '').toLowerCase();
       const roleBadge = u.role === 'admin'
         ? `<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Admin</span>`
         : `<span class="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-slate-300 border border-slate-700">Member</span>`;
@@ -830,7 +836,7 @@ async function loadUsersList() {
     });
 
   } catch (err) {
-    usersTableBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-400">เกิดข้อผิดพลาด: ${err.message}</td></tr>`;
+    usersTableBody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-rose-400">เกิดข้อผิดพลาด: ${err.message}</td></tr>`;
   }
 }
 
