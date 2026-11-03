@@ -487,12 +487,12 @@ def true_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict
 class JobQueueManager:
     """
     Managed Multi-tenant Job Queue Manager:
-    Safely queues jobs to prevent CPU/RAM overload (max 1 active crawler session on the server).
+    Supports up to 3 concurrent scraping jobs across users.
     Ensures 100% stability without browser crashes or session collisions.
-    Displays real-time queue position to users while their job waits.
+    Prevents queue deadlocks and protects active in-memory jobs from disk overwrite.
     Automatically persists and retains all search jobs & Excel files for 3 days!
     """
-    def __init__(self, max_concurrent: int = 1):
+    def __init__(self, max_concurrent: int = 3):
         self.lock = threading.Lock()
         self.jobs: Dict[str, UnifiedJobState] = {}
         # Track active job ID per user (user_lower -> job_id)
@@ -513,10 +513,22 @@ class JobQueueManager:
             sorted_items = sorted(cleaned.items(), key=lambda item: item[1].get("created_at", 0))
             for jid, jdata in sorted_items:
                 try:
+                    # NEVER overwrite an active in-memory running/queued job!
+                    if jid in self.jobs and self.jobs[jid].status in ["running", "starting", "queued"]:
+                        continue
+
                     job = UnifiedJobState.from_storage_dict(jdata)
+                    # If this is startup recovery, any job left as "running", "starting", or "queued"
+                    # had its thread terminate with the previous server process. Mark as "stopped".
+                    if job.status in ["running", "starting", "queued"]:
+                        job.status = "stopped"
+                        job.queue_position = 0
+                        job.add_log("⚠️ บันทึกสถานะล่าสุดก่อนรีสตาร์ทเซิร์ฟเวอร์")
+
                     self.jobs[jid] = job
                     u_key = job.user.strip().lower()
-                    self.user_active_jobs[u_key] = jid
+                    if u_key not in self.user_active_jobs:
+                        self.user_active_jobs[u_key] = jid
                 except Exception as parse_e:
                     print(f"Error parsing saved job {jid}: {parse_e}")
         except Exception as e:
@@ -658,8 +670,15 @@ class JobQueueManager:
 
     def get_user_jobs_history(self, user: str, limit: int = 50) -> List[Dict]:
         with self.lock:
-            # Refresh history from disk and auto-purge jobs older than 3 days
-            self._load_and_cleanup_history()
+            # Sync saved jobs from disk only if not already present in memory
+            try:
+                raw_jobs = load_jobs_history()
+                cleaned = cleanup_old_jobs(raw_jobs, max_age_days=3)
+                for jid, jdata in cleaned.items():
+                    if jid not in self.jobs:
+                        self.jobs[jid] = UnifiedJobState.from_storage_dict(jdata)
+            except Exception:
+                pass
 
             if user.strip().lower() == "admin":
                 # Admin can see all jobs across all users
@@ -738,6 +757,8 @@ class JobQueueManager:
             job.tr_error = None
 
             job.combined_excel_path = None
+
+        self._persist_job(job)
 
         job.add_log(f"🚀 เริ่มค้นหาข้อมูล {len(cids)} รายการ (โหมด: {mode}) สำหรับผู้ใช้: {job.user}")
         job.add_log("⚡ ระบบทำงานแยกอิสระ (ของใครของมัน ไม่ต้องรอกัน)")

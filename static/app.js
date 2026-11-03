@@ -550,7 +550,7 @@ function updateUI(data) {
   }
 
   // 1. Siamchai Card Update
-  const scStatusToRender = isQueued ? 'queued' : data.sc_status;
+  const scStatusToRender = isQueued ? 'queued' : ((data.status === 'starting' && data.sc_status === 'idle') ? 'starting' : data.sc_status);
   updateStatusBadge(scStatusPill, scStatusToRender, data.queue_position);
   scProgressInfo.textContent = `${data.sc_current_index || 0} / ${data.total || 0} รายการ`;
   scProgressPercent.textContent = `${data.sc_percent || 0}%`;
@@ -569,7 +569,7 @@ function updateUI(data) {
   }
 
   // 2. TrueCorp Card Update
-  const trStatusToRender = isQueued ? 'queued' : data.tr_status;
+  const trStatusToRender = isQueued ? 'queued' : ((data.status === 'starting' && data.tr_status === 'idle') ? 'starting' : data.tr_status);
   updateStatusBadge(trStatusPill, trStatusToRender, data.queue_position);
   trProgressInfo.textContent = `${data.tr_current_index || 0} / ${data.total || 0} รายการ`;
   trProgressPercent.textContent = `${data.tr_percent || 0}%`;
@@ -936,6 +936,7 @@ async function loadHistoryList() {
       let statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">ว่าง (IDLE)</span>';
       if (j.status === 'done') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">เสร็จสิ้น</span>';
       else if (j.status === 'running') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-sky-500/20 text-sky-400 border border-sky-500/30 animate-pulse">กำลังค้นหา</span>';
+      else if (j.status === 'starting') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse">กำลังเปิดระบบ</span>';
       else if (j.status === 'queued') statusBadge = `<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">ในคิว (${j.queue_position})</span>`;
       else if (j.status === 'stopped') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] bg-amber-500/20 text-amber-400">หยุดแล้ว</span>';
       else if (j.status === 'error') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30">ข้อผิดพลาด</span>';
