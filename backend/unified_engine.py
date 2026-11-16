@@ -739,17 +739,72 @@ class JobQueueManager:
                     if target_job.job_id in self.waiting_queue:
                         self.waiting_queue.remove(target_job.job_id)
                     self._update_queue_positions()
+                if target_job.status in ["running", "starting"]:
+                    if target_job.status == "starting":
+                        target_job.status = "stopped"
                 if target_job.siamchai_crawler:
                     target_job.siamchai_crawler.stop_requested = True
                 if target_job.true_crawler:
                     target_job.true_crawler.stop_requested = True
                 target_job.add_log(f"🛑 ได้รับคำสั่งหยุดการทำงานจาก {user}...")
 
+                # Free user active slot immediately
+                u_key = target_job.user.strip().lower()
+                if self.user_active_jobs.get(u_key) == target_job.job_id:
+                    del self.user_active_jobs[u_key]
+
         if target_job:
             self._persist_job(target_job)
             return True
 
         return False
+
+    def force_reset_all(self, admin_user: str = "admin") -> int:
+        """
+        Admin emergency reset: Force-stop all running/starting/queued jobs,
+        close all active crawlers, clear active queues and process locks.
+        """
+        stopped_count = 0
+        with self.lock:
+            for job in list(self.jobs.values()):
+                if job.status in ["running", "starting", "queued"]:
+                    job.stop_requested = True
+                    with job.lock:
+                        job.status = "stopped"
+                        if job.sc_status in ["running", "starting"]:
+                            job.sc_status = "stopped"
+                        if job.tr_status in ["running", "starting"]:
+                            job.tr_status = "stopped"
+                    if job.siamchai_crawler:
+                        try:
+                            job.siamchai_crawler.stop_requested = True
+                            job.siamchai_crawler.close()
+                        except Exception:
+                            pass
+                    if job.true_crawler:
+                        try:
+                            job.true_crawler.stop_requested = True
+                            job.true_crawler.close()
+                        except Exception:
+                            pass
+                    job.add_log(f"🛑 [แอดมิน] สั่งบังคับหยุดงานและรีเซ็ตระบบโดย: {admin_user}")
+                    self._persist_job(job)
+                    stopped_count += 1
+
+            self.waiting_queue.clear()
+            self.user_active_jobs.clear()
+            self.active_threads.clear()
+
+        # Clean orphaned chromedriver/chrome processes on Linux
+        try:
+            import subprocess
+            if sys.platform != "win32":
+                subprocess.run("pkill -9 -f chrome || true", shell=True)
+                subprocess.run("pkill -9 -f chromedriver || true", shell=True)
+        except Exception:
+            pass
+
+        return stopped_count
 
     def _execute_job(self, job: UnifiedJobState):
         cfg = load_config()

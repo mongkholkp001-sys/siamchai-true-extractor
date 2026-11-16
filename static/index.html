@@ -394,6 +394,17 @@
             </div>
           </div>
         </div>
+
+        <!-- Emergency Control for Admin -->
+        <div class="p-3 rounded-xl bg-rose-950/30 border border-rose-500/40 flex items-center justify-between">
+          <div>
+            <span class="font-semibold text-rose-300 block text-xs">🛑 ควบคุมระบบฉุกเฉิน (Emergency Force Stop)</span>
+            <span class="text-[11px] text-slate-400">สั่งหยุดงานที่พนักงานค้างอยู่ทั้งหมดทันที และรีเซ็ตระบบให้พร้อมค้นหาใหม่</span>
+          </div>
+          <button id="btn-settings-reset-system" type="button" class="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-medium text-xs shadow transition-colors flex items-center gap-1">
+            <span>⚠️ สั่งหยุดงานทั้งหมด & รีเซ็ต</span>
+          </button>
+        </div>
       </div>
 
       <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
@@ -557,6 +568,7 @@
           <span class="text-[11px] text-amber-400/90 font-medium">🕒 จัดเก็บประวัติและไฟล์ดาวน์โหลดให้อัตโนมัติ 3 วัน (ลบข้อมูลเก่าเกิน 3 วันอัตโนมัติ)</span>
         </div>
         <div class="flex items-center gap-2">
+          <button id="btn-admin-reset-all" class="hidden px-2.5 py-1.5 text-xs text-rose-300 hover:text-white rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 flex items-center gap-1.5 font-medium transition-all" title="สั่งหยุดงานที่ค้างทั้งหมดและรีเซ็ตระบบ">🛑 สั่งหยุดงานทั้งหมด & รีเซ็ต (แอดมิน)</button>
           <button id="btn-refresh-history" class="p-1.5 text-xs text-slate-400 hover:text-white rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700/50">🔄 รีเฟรช</button>
           <button id="btn-close-history" class="text-slate-400 hover:text-white text-lg">&times;</button>
         </div>
@@ -589,6 +601,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=20261116_UNLIMITED"></script>
+  <script src="/static/app.js?v=20261116_ADMIN_RESET"></script>
 </body>
 </html>

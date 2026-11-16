@@ -70,6 +70,9 @@ class StartRequest(BaseModel):
     job_name: str = "unified_search"
     headless: bool = True
 
+class StopRequest(BaseModel):
+    job_id: Optional[str] = None
+
 class ConfigUpdateRequest(BaseModel):
     web_username: Optional[str] = None
     web_password: Optional[str] = None
@@ -274,11 +277,30 @@ async def start_crawl(req: StartRequest, user: str = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/stop")
-async def stop_crawl(job_id: Optional[str] = None, user: str = Depends(get_current_user)):
-    stopped = job_manager.stop_job(user=user, job_id=job_id)
+async def stop_crawl(
+    req: Optional[StopRequest] = None,
+    job_id: Optional[str] = None,
+    user: str = Depends(get_current_user)
+):
+    target_id = None
+    if req and req.job_id:
+        target_id = req.job_id
+    elif job_id:
+        target_id = job_id
+
+    stopped = job_manager.stop_job(user=user, job_id=target_id)
     if stopped:
-        return {"status": "stopping"}
+        return {"status": "stopping", "job_id": target_id}
     return {"status": "not_running_or_not_found"}
+
+@app.post("/api/admin/reset-system")
+async def admin_reset_system(admin: dict = Depends(require_admin)):
+    cnt = job_manager.force_reset_all(admin_user=admin.get("username", "admin"))
+    return {
+        "status": "ok", 
+        "message": f"รีเซ็ตระบบและสั่งหยุดงานที่ค้างสำเร็จ ({cnt} งาน)",
+        "stopped_count": cnt
+    }
 
 @app.get("/api/jobs")
 async def get_jobs_history(user: str = Depends(get_current_user)):
