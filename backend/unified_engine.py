@@ -12,7 +12,8 @@ from backend.storage import (
     load_config,
     load_jobs_history,
     save_jobs_history,
-    cleanup_old_jobs
+    cleanup_old_jobs,
+    recover_jobs_from_results
 )
 
 class UnifiedJobState:
@@ -525,6 +526,8 @@ class JobQueueManager:
     def _load_and_cleanup_history(self):
         try:
             raw_jobs = load_jobs_history()
+            # Auto-recover any Excel files from results/ folder from past 3 days
+            raw_jobs = recover_jobs_from_results(raw_jobs, max_age_days=3)
             cleaned = cleanup_old_jobs(raw_jobs, max_age_days=3)
             # Sort chronologically so newest overrides user_active_jobs
             sorted_items = sorted(cleaned.items(), key=lambda item: item[1].get("created_at", 0))
@@ -548,14 +551,22 @@ class JobQueueManager:
                         self.user_active_jobs[u_key] = jid
                 except Exception as parse_e:
                     print(f"Error parsing saved job {jid}: {parse_e}")
+            # Ensure recovered jobs are persisted safely
+            save_jobs_history(cleaned)
         except Exception as e:
             print(f"Error loading jobs history: {e}")
 
     def _persist_job(self, job: UnifiedJobState):
         try:
             raw_jobs = load_jobs_history()
+            # Keep all in-memory jobs so nothing is ever dropped
+            with self.lock:
+                for jid, j in self.jobs.items():
+                    raw_jobs[jid] = j.to_storage_dict()
+            raw_jobs[job.job_id] = job.to_storage_dict()
+            # Auto-recover any Excel files in results
+            raw_jobs = recover_jobs_from_results(raw_jobs, max_age_days=3)
             cleaned = cleanup_old_jobs(raw_jobs, max_age_days=3)
-            cleaned[job.job_id] = job.to_storage_dict()
             save_jobs_history(cleaned)
         except Exception as e:
             print(f"Error persisting job {job.job_id}: {e}")
@@ -695,6 +706,7 @@ class JobQueueManager:
             # Sync saved jobs from disk only if not already present in memory
             try:
                 raw_jobs = load_jobs_history()
+                raw_jobs = recover_jobs_from_results(raw_jobs, max_age_days=3)
                 cleaned = cleanup_old_jobs(raw_jobs, max_age_days=3)
                 for jid, jdata in cleaned.items():
                     if jid not in self.jobs:
@@ -758,6 +770,54 @@ class JobQueueManager:
             return True
 
         return False
+
+    def reset_user_job(self, user: str, job_id: Optional[str] = None) -> int:
+        """
+        Reset/unstick a single user's job: stops crawlers if running, clears user_active_jobs,
+        and marks job as stopped. Does not affect any other user's job!
+        """
+        user_key = user.strip().lower()
+        cnt = 0
+        with self.lock:
+            target_jobs = []
+            if job_id and job_id in self.jobs:
+                target_jobs.append(self.jobs[job_id])
+            else:
+                for j in self.jobs.values():
+                    if j.user.strip().lower() == user_key and j.status in ["running", "starting", "queued"]:
+                        target_jobs.append(j)
+
+            for job in target_jobs:
+                job.stop_requested = True
+                with job.lock:
+                    job.status = "stopped"
+                    if job.sc_status in ["running", "starting"]:
+                        job.sc_status = "stopped"
+                    if job.tr_status in ["running", "starting"]:
+                        job.tr_status = "stopped"
+                if job.siamchai_crawler:
+                    try:
+                        job.siamchai_crawler.stop_requested = True
+                        job.siamchai_crawler.close()
+                    except Exception:
+                        pass
+                if job.true_crawler:
+                    try:
+                        job.true_crawler.stop_requested = True
+                        job.true_crawler.close()
+                    except Exception:
+                        pass
+                job.add_log("🔄 ได้รับคำสั่งรีเซ็ตงาน ปลดล็อคสถานะพร้อมเริ่มค้นหาใหม่")
+                self._persist_job(job)
+                cnt += 1
+
+            if user_key in self.user_active_jobs:
+                del self.user_active_jobs[user_key]
+
+            if job_id and job_id in self.waiting_queue:
+                self.waiting_queue.remove(job_id)
+
+        return cnt
 
     def force_reset_all(self, admin_user: str = "admin") -> int:
         """

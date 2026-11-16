@@ -73,6 +73,10 @@ class StartRequest(BaseModel):
 class StopRequest(BaseModel):
     job_id: Optional[str] = None
 
+class JobResetRequest(BaseModel):
+    job_id: Optional[str] = None
+    user: Optional[str] = None
+
 class ConfigUpdateRequest(BaseModel):
     web_username: Optional[str] = None
     web_password: Optional[str] = None
@@ -292,6 +296,25 @@ async def stop_crawl(
     if stopped:
         return {"status": "stopping", "job_id": target_id}
     return {"status": "not_running_or_not_found"}
+
+@app.post("/api/job/reset")
+async def reset_single_job(
+    req: Optional[JobResetRequest] = None,
+    user: str = Depends(get_current_user)
+):
+    target_user = (req.user if req and req.user else user)
+    target_job_id = (req.job_id if req and req.job_id else None)
+    
+    # Regular users can only reset their own jobs, Admin can reset any user's job
+    if user.strip().lower() != "admin" and target_user.strip().lower() != user.strip().lower():
+        raise HTTPException(status_code=403, detail="คุณสามารถรีเซ็ตเฉพาะงานของตนเองได้")
+
+    cnt = job_manager.reset_user_job(user=target_user, job_id=target_job_id)
+    return {
+        "status": "ok",
+        "message": f"รีเซ็ตและปลดล็อคสถานะงานสำเร็จ ({cnt} งาน)",
+        "reset_count": cnt
+    }
 
 @app.post("/api/admin/reset-system")
 async def admin_reset_system(admin: dict = Depends(require_admin)):

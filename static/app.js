@@ -275,6 +275,34 @@ btnStop.addEventListener('click', async () => {
   }
 });
 
+const btnUserResetActive = document.getElementById('btn-user-reset-active');
+if (btnUserResetActive) {
+  btnUserResetActive.addEventListener('click', async () => {
+    if (!confirm('คุณต้องการรีเซ็ตสถานะงานค้นหาของคุณ เพื่อให้ระบบพร้อมเริ่มค้นหาใหม่ทันทีใช่หรือไม่?')) return;
+    btnUserResetActive.disabled = true;
+    btnUserResetActive.textContent = 'กำลังรีเซ็ต...';
+    try {
+      const res = await fetch('/api/job/reset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {})
+        },
+        body: JSON.stringify({ user: authUser })
+      });
+      const data = await res.json();
+      alert(`🔄 ${data.message || 'รีเซ็ตสถานะงานของคุณเรียบร้อยแล้ว'}`);
+      if (typeof pollStatusFallback === 'function') pollStatusFallback();
+      if (typeof loadHistoryList === 'function') loadHistoryList();
+    } catch (err) {
+      alert('เกิดข้อผิดพลาด: ' + err.message);
+    } finally {
+      btnUserResetActive.disabled = false;
+      btnUserResetActive.innerHTML = '<span>🔄 รีเซ็ต</span>';
+    }
+  });
+}
+
 // ------------------ Table View Tabs ------------------
 tabTableSum.addEventListener('click', () => switchTableTab('summary'));
 tabTableSc.addEventListener('click', () => switchTableTab('siamchai'));
@@ -1073,9 +1101,16 @@ async function loadHistoryList() {
 
       let dlBtns = [];
       const isJobActive = (j.status === 'running' || j.status === 'starting' || j.status === 'queued');
-      if (isJobActive && (currentUserRole === 'admin' || authUser.toLowerCase() === 'admin')) {
-        dlBtns.push(`<button class="btn-admin-stop-row px-2 py-0.5 rounded bg-rose-600/30 hover:bg-rose-600 text-rose-200 hover:text-white text-xs border border-rose-500/40 inline-flex items-center gap-1 font-medium transition-colors" data-jobid="${j.job_id}" data-user="${j.user}">🛑 บังคับหยุด</button>`);
+      const canManage = (currentUserRole === 'admin' || authUser.toLowerCase() === 'admin' || authUser.toLowerCase() === (j.user || '').toLowerCase());
+
+      // If active job: Show specific Stop and Reset buttons right on this file row
+      if (isJobActive && canManage) {
+        dlBtns.push(`<button class="btn-row-stop px-2 py-1 rounded bg-rose-600/30 hover:bg-rose-600 text-rose-200 hover:text-white text-xs border border-rose-500/40 inline-flex items-center gap-1 font-medium transition-colors" data-jobid="${j.job_id}" data-user="${j.user}" title="สั่งหยุดงานนี้เฉพาะไฟล์นี้">🛑 หยุดงานนี้</button>`);
+        dlBtns.push(`<button class="btn-row-reset px-2 py-1 rounded bg-amber-600/30 hover:bg-amber-600 text-amber-200 hover:text-white text-xs border border-amber-500/40 inline-flex items-center gap-1 font-medium transition-colors" data-jobid="${j.job_id}" data-user="${j.user}" title="รีเซ็ตและปลดล็อคให้เริ่มงานใหม่ได้ทันที">🔄 รีเซ็ต</button>`);
+      } else if ((j.status === 'stopped' || j.status === 'error') && canManage) {
+        dlBtns.push(`<button class="btn-row-reset px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] border border-slate-700 inline-flex items-center gap-1 font-medium transition-colors" data-jobid="${j.job_id}" data-user="${j.user}" title="รีเซ็ตสถานะพร้อมเริ่มค้นหาใหม่">🔄 รีเซ็ต</button>`);
       }
+
       if (j.has_combined_excel) {
         dlBtns.push(`<a href="/api/download/combined?job_id=${encodeURIComponent(j.job_id)}&token=${authToken}" target="_blank" class="px-2.5 py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-semibold border border-emerald-500/40">📊 Excel รวม</a>`);
       }
@@ -1100,12 +1135,12 @@ async function loadHistoryList() {
       historyTableBody.appendChild(tr);
     });
 
-    // Admin Force Stop Single Job Row Handler
-    document.querySelectorAll('.btn-admin-stop-row').forEach(btn => {
+    // Row Stop Specific Job Handler
+    document.querySelectorAll('.btn-row-stop').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         const jid = e.currentTarget.getAttribute('data-jobid');
         const u = e.currentTarget.getAttribute('data-user');
-        if (!confirm(`คุณต้องการสั่งบังคับหยุดงานของผู้ใช้ "${u}" (เลขงาน ${jid}) ทันทีใช่หรือไม่?\n\n(ระบบจะตัดการค้นหาและปิดเบราว์เซอร์ของงานนี้ทันที)`)) return;
+        if (!confirm(`คุณต้องการสั่งหยุดงานของผู้ใช้ "${u}" (งานนี้เท่านั้น) ใช่หรือไม่?`)) return;
         try {
           btn.disabled = true;
           btn.textContent = 'กำลังหยุด...';
@@ -1117,8 +1152,35 @@ async function loadHistoryList() {
             body: JSON.stringify({ job_id: jid })
           });
           const data = await res.json();
-          alert(`🛑 ส่งคำสั่งบังคับหยุดงานของผู้ใช้ "${u}" สำเร็จแล้ว`);
+          alert(`🛑 สั่งหยุดงานของผู้ใช้ "${u}" เรียบร้อยแล้ว`);
           loadHistoryList();
+          if (typeof pollStatusFallback === 'function') pollStatusFallback();
+        } catch (err) {
+          alert('เกิดข้อผิดพลาด: ' + err.message);
+        }
+      });
+    });
+
+    // Row Reset Specific Job Handler
+    document.querySelectorAll('.btn-row-reset').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const jid = e.currentTarget.getAttribute('data-jobid');
+        const u = e.currentTarget.getAttribute('data-user');
+        if (!confirm(`คุณต้องการรีเซ็ตและปลดล็อคงานของผู้ใช้ "${u}" (งานนี้เท่านั้น) เพื่อให้เริ่มใหม่ได้ทันทีใช่หรือไม่?`)) return;
+        try {
+          btn.disabled = true;
+          btn.textContent = 'กำลังรีเซ็ต...';
+          const headers = { 'Content-Type': 'application/json' };
+          if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+          const res = await fetch('/api/job/reset', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({ job_id: jid, user: u })
+          });
+          const data = await res.json();
+          alert(`🔄 รีเซ็ตและปลดล็อคงานของผู้ใช้ "${u}" เรียบร้อยแล้ว`);
+          loadHistoryList();
+          if (typeof pollStatusFallback === 'function') pollStatusFallback();
         } catch (err) {
           alert('เกิดข้อผิดพลาด: ' + err.message);
         }

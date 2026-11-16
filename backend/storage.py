@@ -209,36 +209,206 @@ def delete_user(username: str, current_admin: str):
     return True
 
 # ------------------ Persistent Job History (Auto-retain 3 days) ------------------
+import threading
+from datetime import datetime
+
+_history_lock = threading.RLock()
+JOBS_BACKUP_FILE = os.path.join(DATA_DIR, "jobs_history.json.bak")
+
 def load_jobs_history() -> dict:
-    if os.path.exists(JOBS_FILE):
-        try:
-            with open(JOBS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-        except Exception:
-            pass
-    return {}
+    with _history_lock:
+        for target_path in [JOBS_FILE, JOBS_BACKUP_FILE]:
+            if os.path.exists(target_path):
+                try:
+                    with open(target_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict) and data:
+                            return data
+                except Exception:
+                    pass
+        return {}
 
 def save_jobs_history(jobs_dict: dict) -> bool:
-    try:
-        temp_file = JOBS_FILE + ".tmp"
-        with open(temp_file, "w", encoding="utf-8") as f:
-            json.dump(jobs_dict, f, indent=2, ensure_ascii=False)
-        if os.path.exists(JOBS_FILE):
+    with _history_lock:
+        try:
+            # Prevent wiping existing jobs if incoming dict is empty
+            if not jobs_dict and os.path.exists(JOBS_FILE):
+                try:
+                    if os.path.getsize(JOBS_FILE) > 10:
+                        return False
+                except Exception:
+                    pass
+
+            temp_file = JOBS_FILE + ".tmp"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(jobs_dict, f, indent=2, ensure_ascii=False)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+
+            # Atomic replace
+            os.replace(temp_file, JOBS_FILE)
+
+            # Keep backup copy
             try:
-                os.remove(JOBS_FILE)
+                shutil.copy2(JOBS_FILE, JOBS_BACKUP_FILE)
             except Exception:
                 pass
-        os.rename(temp_file, JOBS_FILE)
-        return True
+
+            return True
+        except Exception as e:
+            print(f"Error saving jobs history: {e}")
+            return False
+
+def recover_jobs_from_results(jobs_dict: dict, max_age_days: int = 3) -> dict:
+    """
+    Auto-scan RESULTS_DIR to recover all completed Excel files from today and past 3 days,
+    ensuring no history is ever lost even if jobs_history.json was cleared or reset.
+    """
+    if not os.path.exists(RESULTS_DIR):
+        return jobs_dict
+
+    now = time.time()
+    cutoff = now - (max_age_days * 86400)
+
+    try:
+        # Group result files by (user, timestamp_str)
+        file_groups = {}
+        for fname in os.listdir(RESULTS_DIR):
+            if not fname.endswith(".xlsx") or fname.startswith("~$"):
+                continue
+            fpath = os.path.join(RESULTS_DIR, fname)
+            if not os.path.isfile(fpath):
+                continue
+            try:
+                mtime = os.path.getmtime(fpath)
+            except Exception:
+                mtime = now
+            if mtime < cutoff:
+                continue
+
+            # Pattern A: combined_{user}_{YYYYMMDD_HHMMSS}.xlsx
+            m = re.match(r"^(combined|siamchai|true)_(.+)_(\d{8}_\d{6})\.xlsx$", fname, re.IGNORECASE)
+            if m:
+                ftype = m.group(1).lower()
+                user = m.group(2)
+                ts_str = m.group(3)
+                key = (user, ts_str)
+                if key not in file_groups:
+                    file_groups[key] = {"user": user, "ts_str": ts_str, "mtime": mtime}
+                file_groups[key][ftype] = fpath
+                continue
+
+            # Pattern B: {prefix}_{YYYYMMDD_HHMMSS}.xlsx
+            m2 = re.match(r"^([a-zA-Z0-9_\-]+)_(\d{8}_\d{6})\.xlsx$", fname)
+            if m2:
+                prefix = m2.group(1)
+                ts_str = m2.group(2)
+                user = "admin"
+                low_p = prefix.lower()
+                ftype = "combined" if ("combined" in low_p or "unified" in low_p) else ("siamchai" if "siamchai" in low_p else "true")
+                key = (f"{prefix}_{user}", ts_str)
+                if key not in file_groups:
+                    file_groups[key] = {"user": user, "ts_str": ts_str, "mtime": mtime}
+                file_groups[key][ftype] = fpath
+
+        # Find existing registered paths
+        existing_comb_paths = set()
+        for jdata in jobs_dict.values():
+            for k in ["combined_excel_path", "sc_excel_path", "tr_excel_path"]:
+                p = jdata.get(k)
+                if p:
+                    existing_comb_paths.add(os.path.normpath(p))
+
+        for (user, ts_str), g in file_groups.items():
+            comb_path = g.get("combined")
+            sc_path = g.get("siamchai")
+            tr_path = g.get("true")
+
+            # Check if any path is already known
+            if any(p and os.path.normpath(p) in existing_comb_paths for p in [comb_path, sc_path, tr_path]):
+                continue
+
+            try:
+                dt = datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
+                created_ts = dt.timestamp()
+            except Exception:
+                created_ts = g["mtime"]
+
+            try:
+                created_time_str = time.strftime("%d/%m/%Y %H:%M:%S", time.localtime(created_ts))
+            except Exception:
+                created_time_str = ts_str
+
+            has_sc = bool(sc_path)
+            has_tr = bool(tr_path)
+            has_comb = bool(comb_path)
+            if (has_sc and has_tr) or has_comb:
+                mode = "both"
+            elif has_sc:
+                mode = "siamchai"
+            else:
+                mode = "true"
+
+            total = 0
+            check_file = comb_path or sc_path or tr_path
+            if check_file and os.path.exists(check_file):
+                try:
+                    wb = openpyxl.load_workbook(check_file, read_only=True)
+                    ws = wb.active
+                    total = max(0, ws.max_row - 1)
+                    wb.close()
+                except Exception:
+                    total = 0
+
+            job_id = f"job_{int(created_ts)}_{user}"
+            suffix = 1
+            base_jid = job_id
+            while job_id in jobs_dict:
+                job_id = f"{base_jid}_{suffix}"
+                suffix += 1
+
+            jobs_dict[job_id] = {
+                "job_id": job_id,
+                "user": user,
+                "job_name": f"recovered_{user}",
+                "mode": mode,
+                "status": "done",
+                "queue_position": 0,
+                "total": total,
+                "cids": [],
+                "headless": True,
+                "sc_status": "done" if (has_sc or has_comb) else "idle",
+                "sc_current_index": total,
+                "sc_current_cid": "",
+                "sc_results": {},
+                "sc_excel_path": sc_path,
+                "sc_error": None,
+                "tr_status": "done" if (has_tr or has_comb) else "idle",
+                "tr_current_index": total,
+                "tr_current_cid": "",
+                "tr_results": {},
+                "tr_excel_path": tr_path,
+                "tr_error": None,
+                "combined_excel_path": comb_path,
+                "logs": ["📁 บันทึกประวัติไฟล์งานดาวน์โหลดจากเซิร์ฟเวอร์"],
+                "created_at": created_ts,
+                "created_time_str": created_time_str,
+                "start_time": created_ts,
+                "end_time": created_ts,
+                "stop_requested": False
+            }
     except Exception as e:
-        print(f"Error saving jobs history: {e}")
-        return False
+        print(f"Error recovering jobs from results: {e}")
+
+    return jobs_dict
 
 def cleanup_old_jobs(jobs_dict: dict, max_age_days: int = 3) -> dict:
     """
-    Purge jobs and generated Excel files older than max_age_days (3 days / 72 hours).
+    Purge jobs and generated Excel files strictly older than max_age_days (3 days / 72 hours).
+    Never purges jobs with invalid/missing timestamps!
     """
     now = time.time()
     cutoff = now - (max_age_days * 86400)
@@ -246,8 +416,9 @@ def cleanup_old_jobs(jobs_dict: dict, max_age_days: int = 3) -> dict:
     changed = False
 
     for job_id, job_data in jobs_dict.items():
-        created_at = job_data.get("created_at", 0)
-        if created_at < cutoff:
+        created_at = job_data.get("created_at")
+        # Only purge if created_at is a strictly positive number older than cutoff
+        if isinstance(created_at, (int, float)) and created_at > 0 and created_at < cutoff:
             changed = True
             for fkey in ["sc_excel_path", "tr_excel_path", "combined_excel_path"]:
                 fpath = job_data.get(fkey)
@@ -259,15 +430,15 @@ def cleanup_old_jobs(jobs_dict: dict, max_age_days: int = 3) -> dict:
         else:
             cleaned[job_id] = job_data
 
-    # Also clean orphaned Excel files in results folder older than cutoff
+    # Also clean orphaned Excel files in results folder strictly older than cutoff
     if os.path.exists(RESULTS_DIR):
         try:
             for fname in os.listdir(RESULTS_DIR):
-                if fname.endswith(".xlsx"):
+                if fname.endswith(".xlsx") and not fname.startswith("~$"):
                     fpath = os.path.join(RESULTS_DIR, fname)
                     if os.path.isfile(fpath):
                         mtime = os.path.getmtime(fpath)
-                        if mtime < cutoff:
+                        if mtime > 0 and mtime < cutoff:
                             try:
                                 os.remove(fpath)
                             except Exception:
