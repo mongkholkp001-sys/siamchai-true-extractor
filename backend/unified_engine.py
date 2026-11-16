@@ -509,7 +509,7 @@ class JobQueueManager:
     Prevents queue deadlocks and protects active in-memory jobs from disk overwrite.
     Automatically persists and retains all search jobs & Excel files for 3 days!
     """
-    def __init__(self, max_concurrent: int = 3):
+    def __init__(self, max_concurrent: int = 999):
         self.lock = threading.RLock()
         self.jobs: Dict[str, UnifiedJobState] = {}
         # Track active job ID per user (user_lower -> job_id)
@@ -596,7 +596,8 @@ class JobQueueManager:
             job.total = len(cids)
             job.headless = headless
             job.created_at = time.time()
-            job.status = "queued"
+            job.status = "starting"
+            job.queue_position = 0
 
             # Auto-Resume Checkpoint Detection:
             # Check if this user had a prior job with partial results for these CIDs
@@ -615,21 +616,15 @@ class JobQueueManager:
                             job.tr_results[c] = recent_job.tr_results[c]
                 inherited_count = max(len(job.sc_results), len(job.tr_results))
 
-            self.waiting_queue.append(job_id)
-            job.queue_position = len(self.waiting_queue)
-
             self.jobs[job_id] = job
             self.user_active_jobs[user_key] = job_id
 
             job.add_log(f"📥 ได้รับคำสั่งค้นหาข้อมูล {len(cids)} รายการ (โหมด: {mode}) โดยผู้ใช้: {user}")
             if inherited_count > 0:
                 job.add_log(f"🔄 ตรวจพบข้อมูลเดิมที่ดึงสำเร็จแล้ว {inherited_count} รายการ -> ระบบจะดึงต่ออัตโนมัติ (ไม่ต้องเริ่มนับ 1 ใหม่!)")
-            if job.queue_position > 1:
-                job.add_log(f"⏳ เข้าสู่คิวประมวลผล (ลำดับคิวที่ {job.queue_position}) กำลังรอให้งานก่อนหน้าเสร็จสิ้น...")
-            else:
-                job.add_log("⚡ พร้อมเริ่มทำงานทันที...")
+            job.add_log("⚡ พร้อมเริ่มค้นหาทันที (แยกทำงานอิสระ ไม่ต้องรอคิว!)")
 
-            # Launch dedicated worker thread which will acquire semaphore
+            # Launch dedicated worker thread immediately without queue
             t = threading.Thread(target=self._run_job_wrapper, args=(job,), daemon=True)
             self.active_threads[job_id] = t
             t.start()
@@ -641,26 +636,20 @@ class JobQueueManager:
 
     def _run_job_wrapper(self, job: UnifiedJobState):
         try:
-            with self.execution_semaphore:
-                with self.lock:
-                    if job.job_id in self.waiting_queue:
-                        self.waiting_queue.remove(job.job_id)
-                    self._update_queue_positions()
-
-                if job.stop_requested:
-                    with job.lock:
-                        job.status = "stopped"
-                    job.add_log("🛑 งานถูกยกเลิกก่อนเริ่มทำงาน")
-                    self._persist_job(job)
-                    return
-
+            if job.stop_requested:
                 with job.lock:
-                    job.status = "starting"
-                    job.queue_position = 0
-                job.add_log("🚀 ถึงคิวประมวลผลแล้ว! กำลังเปิดระบบและเริ่มค้นหาข้อมูล...")
+                    job.status = "stopped"
+                job.add_log("🛑 งานถูกยกเลิกก่อนเริ่มทำงาน")
                 self._persist_job(job)
+                return
 
-                self._execute_job(job)
+            with job.lock:
+                job.status = "starting"
+                job.queue_position = 0
+            job.add_log("🚀 กำลังเปิดระบบและเริ่มค้นหาข้อมูล (ทำงานทันที ไม่ต้องรอคิว)...")
+            self._persist_job(job)
+
+            self._execute_job(job)
         except Exception as e:
             job.add_log(f"❌ เกิดข้อผิดพลาดในการประมวลผลงาน: {e}")
             with job.lock:
@@ -668,9 +657,6 @@ class JobQueueManager:
             self._persist_job(job)
         finally:
             with self.lock:
-                if job.job_id in self.waiting_queue:
-                    self.waiting_queue.remove(job.job_id)
-                self._update_queue_positions()
                 if job.job_id in self.active_threads:
                     del self.active_threads[job.job_id]
 

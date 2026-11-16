@@ -765,12 +765,30 @@ async function loadUsersList() {
         <td class="p-2.5 text-center">${expBadge}</td>
         <td class="p-2.5 text-center">${devBadge}</td>
         <td class="p-2.5 text-right space-x-1.5">
+          <button class="btn-user-edit px-2 py-1 rounded bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 text-xs border border-indigo-500/30" data-user="${u.username}" data-name="${u.name || ''}" data-expire="${u.expire_date || ''}" data-maxdev="${u.max_devices || 2}" title="แก้ไขโปรโมชั่น / วันหมดอายุ / โควต้าเครื่อง">✏️ แก้ไข</button>
           ${u.role !== 'admin' ? `<button class="btn-user-reset-dev px-2 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-xs border border-amber-500/30" data-user="${u.username}" title="ล้างประวัติเครื่องเพื่อให้ผูกเครื่องใหม่">💻 ล้างเครื่อง</button>` : ''}
           <button class="btn-user-reset px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs border border-slate-700" data-user="${u.username}">🔑 รหัสผ่าน</button>
           ${!isCurrent ? `<button class="btn-user-del px-2 py-1 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 text-xs border border-rose-500/30" data-user="${u.username}">🗑️ ลบ</button>` : `<span class="text-[11px] text-slate-500 italic pl-1">(บัญชีนี้)</span>`}
         </td>
       `;
       usersTableBody.appendChild(tr);
+    });
+
+    document.querySelectorAll('.btn-user-edit').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const u = e.currentTarget.getAttribute('data-user');
+        const name = e.currentTarget.getAttribute('data-name');
+        const expire = e.currentTarget.getAttribute('data-expire');
+        const maxdev = e.currentTarget.getAttribute('data-maxdev') || '2';
+
+        document.getElementById('edit-user-username').value = u;
+        document.getElementById('edit-user-name').value = name;
+        document.getElementById('edit-user-expire').value = expire;
+        document.getElementById('edit-user-maxdev').value = maxdev;
+
+        const modalEdit = document.getElementById('modal-edit-user');
+        if (modalEdit) modalEdit.classList.remove('hidden');
+      });
     });
 
     document.querySelectorAll('.btn-user-reset-dev').forEach(btn => {
@@ -929,6 +947,80 @@ if (btnCreateUser) {
       }
     } catch (err) {
       alert('เกิดข้อผิดพลาด: ' + err.message);
+    }
+  });
+}
+
+// ------------------ Edit User Modal Handlers ------------------
+const modalEditUser = document.getElementById('modal-edit-user');
+const btnCloseEditUser = document.getElementById('btn-close-edit-user');
+const btnCancelEditUser = document.getElementById('btn-cancel-edit-user');
+const btnSaveEditUser = document.getElementById('btn-save-edit-user');
+const btnEditAdd30 = document.getElementById('btn-edit-add-30');
+const btnEditAdd60 = document.getElementById('btn-edit-add-60');
+const btnEditUnlimited = document.getElementById('btn-edit-unlimited');
+
+function addDaysToDateInput(inpId, days) {
+  const inp = document.getElementById(inpId);
+  if (!inp) return;
+  let baseDate = new Date();
+  if (inp.value) {
+    const parsed = new Date(inp.value);
+    if (!isNaN(parsed.getTime()) && parsed > baseDate) {
+      baseDate = parsed;
+    }
+  }
+  baseDate.setDate(baseDate.getDate() + days);
+  const yyyy = baseDate.getFullYear();
+  const mm = String(baseDate.getMonth() + 1).padStart(2, '0');
+  const dd = String(baseDate.getDate()).padStart(2, '0');
+  inp.value = `${yyyy}-${mm}-${dd}`;
+}
+
+if (btnEditAdd30) btnEditAdd30.addEventListener('click', () => addDaysToDateInput('edit-user-expire', 30));
+if (btnEditAdd60) btnEditAdd60.addEventListener('click', () => addDaysToDateInput('edit-user-expire', 60));
+if (btnEditUnlimited) btnEditUnlimited.addEventListener('click', () => {
+  const inp = document.getElementById('edit-user-expire');
+  if (inp) inp.value = '';
+});
+
+if (btnCloseEditUser) btnCloseEditUser.addEventListener('click', () => modalEditUser && modalEditUser.classList.add('hidden'));
+if (btnCancelEditUser) btnCancelEditUser.addEventListener('click', () => modalEditUser && modalEditUser.classList.add('hidden'));
+
+if (btnSaveEditUser) {
+  btnSaveEditUser.addEventListener('click', async () => {
+    const u = document.getElementById('edit-user-username').value;
+    const name = document.getElementById('edit-user-name').value.trim();
+    const expire = document.getElementById('edit-user-expire').value;
+    const maxdev = parseInt(document.getElementById('edit-user-maxdev').value, 10) || 2;
+
+    try {
+      btnSaveEditUser.disabled = true;
+      btnSaveEditUser.textContent = 'กำลังบันทึก...';
+      const headers = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      const res = await fetch(`/api/users/${encodeURIComponent(u)}`, {
+        method: 'PUT',
+        headers: headers,
+        body: JSON.stringify({
+          name: name,
+          expire_date: expire,
+          max_devices: maxdev
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`✅ อัปเดตข้อมูลผู้ใช้ "${u}" เรียบร้อยแล้ว (โควต้า ${maxdev} เครื่อง, วันหมดอายุ: ${expire || 'ไม่จำกัด'})`);
+        if (modalEditUser) modalEditUser.classList.add('hidden');
+        loadUsersList();
+      } else {
+        alert(`❌ เกิดข้อผิดพลาด: ${data.detail || 'ไม่สามารถอัปเดตได้'}`);
+      }
+    } catch (err) {
+      alert('เกิดข้อผิดพลาด: ' + err.message);
+    } finally {
+      btnSaveEditUser.disabled = false;
+      btnSaveEditUser.textContent = '💾 บันทึกการแก้ไข';
     }
   });
 }
