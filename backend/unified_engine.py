@@ -504,13 +504,12 @@ def true_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict
 
 class JobQueueManager:
     """
-    Managed Multi-tenant Job Queue Manager:
-    Supports up to 3 concurrent scraping jobs across users.
-    Ensures 100% stability without browser crashes or session collisions.
-    Prevents queue deadlocks and protects active in-memory jobs from disk overwrite.
+    Managed Multi-tenant Smart Job Queue Manager:
+    Safeguards single-account credentials on Siamchai and TrueCorp from session collisions.
+    Prevents VPS memory / CPU overload by ensuring smooth 1-by-1 sequential execution.
     Automatically persists and retains all search jobs & Excel files for 3 days!
     """
-    def __init__(self, max_concurrent: int = 999):
+    def __init__(self, max_concurrent: int = 1):
         self.lock = threading.RLock()
         self.jobs: Dict[str, UnifiedJobState] = {}
         # Track active job ID per user (user_lower -> job_id)
@@ -607,8 +606,22 @@ class JobQueueManager:
             job.total = len(cids)
             job.headless = headless
             job.created_at = time.time()
-            job.status = "starting"
-            job.queue_position = 0
+
+            # Smart Queue: check if another job is currently active or queued
+            has_active_running = any(
+                j.status in ["running", "starting"] and not j.stop_requested 
+                for j in self.jobs.values()
+            )
+
+            if has_active_running or len(self.waiting_queue) > 0:
+                job.status = "queued"
+                self.waiting_queue.append(job_id)
+                job.queue_position = len(self.waiting_queue)
+                job.add_log(f"⏳ เข้าสู่คิวประมวลผลอัตโนมัติ (ลำดับคิวที่ {job.queue_position}) เมื่อคิวก่อนหน้าเสร็จสิ้น ระบบจะเริ่มค้นหางานนี้ทันทีโดยไม่ต้องกดซ้ำ")
+            else:
+                job.status = "starting"
+                job.queue_position = 0
+                job.add_log("⚡ พร้อมเริ่มค้นหาทันที...")
 
             # Auto-Resume Checkpoint Detection:
             # Check if this user had a prior job with partial results for these CIDs
@@ -633,9 +646,8 @@ class JobQueueManager:
             job.add_log(f"📥 ได้รับคำสั่งค้นหาข้อมูล {len(cids)} รายการ (โหมด: {mode}) โดยผู้ใช้: {user}")
             if inherited_count > 0:
                 job.add_log(f"🔄 ตรวจพบข้อมูลเดิมที่ดึงสำเร็จแล้ว {inherited_count} รายการ -> ระบบจะดึงต่ออัตโนมัติ (ไม่ต้องเริ่มนับ 1 ใหม่!)")
-            job.add_log("⚡ พร้อมเริ่มค้นหาทันที (แยกทำงานอิสระ ไม่ต้องรอคิว!)")
 
-            # Launch dedicated worker thread immediately without queue
+            # Launch dedicated worker thread which will acquire semaphore in order
             t = threading.Thread(target=self._run_job_wrapper, args=(job,), daemon=True)
             self.active_threads[job_id] = t
             t.start()
@@ -647,20 +659,26 @@ class JobQueueManager:
 
     def _run_job_wrapper(self, job: UnifiedJobState):
         try:
-            if job.stop_requested:
+            with self.execution_semaphore:
+                with self.lock:
+                    if job.job_id in self.waiting_queue:
+                        self.waiting_queue.remove(job.job_id)
+                    self._update_queue_positions()
+
+                if job.stop_requested:
+                    with job.lock:
+                        job.status = "stopped"
+                    job.add_log("🛑 งานถูกยกเลิกก่อนเริ่มทำงาน")
+                    self._persist_job(job)
+                    return
+
                 with job.lock:
-                    job.status = "stopped"
-                job.add_log("🛑 งานถูกยกเลิกก่อนเริ่มทำงาน")
+                    job.status = "starting"
+                    job.queue_position = 0
+                job.add_log("🚀 ถึงคิวประมวลผลแล้ว! กำลังเปิดระบบและเริ่มค้นหาข้อมูล...")
                 self._persist_job(job)
-                return
 
-            with job.lock:
-                job.status = "starting"
-                job.queue_position = 0
-            job.add_log("🚀 กำลังเปิดระบบและเริ่มค้นหาข้อมูล (ทำงานทันที ไม่ต้องรอคิว)...")
-            self._persist_job(job)
-
-            self._execute_job(job)
+                self._execute_job(job)
         except Exception as e:
             job.add_log(f"❌ เกิดข้อผิดพลาดในการประมวลผลงาน: {e}")
             with job.lock:
@@ -668,6 +686,9 @@ class JobQueueManager:
             self._persist_job(job)
         finally:
             with self.lock:
+                if job.job_id in self.waiting_queue:
+                    self.waiting_queue.remove(job.job_id)
+                self._update_queue_positions()
                 if job.job_id in self.active_threads:
                     del self.active_threads[job.job_id]
 
@@ -816,6 +837,7 @@ class JobQueueManager:
 
             if job_id and job_id in self.waiting_queue:
                 self.waiting_queue.remove(job_id)
+                self._update_queue_positions()
 
         return cnt
 
