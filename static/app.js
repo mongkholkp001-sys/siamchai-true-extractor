@@ -1403,13 +1403,67 @@ if (btnCopyMachineId) {
 if (btnCopyLineMsg) {
   btnCopyLineMsg.addEventListener('click', () => {
     if (!cachedCurrentMachineId) return;
-    const lineMsg = `เรียน คุณมงคล,\nขอเปิดใช้งานโปรแกรม Customer Data Hub สำหรับเครื่องนี้ครับ\n- รหัสเครื่อง (Machine ID): ${cachedCurrentMachineId}\n- ชื่อลูกค้า/บริษัท: [กรุณาระบุชื่อ]\nขอบคุณครับ`;
+    const custName = (document.getElementById('req-lic-name')?.value || '').trim();
+    const phone = (document.getElementById('req-lic-phone')?.value || '').trim();
+    let lineMsg = `เรียน คุณมงคล,\nขอเปิดใช้งานโปรแกรม Customer Data Hub สำหรับเครื่องนี้ครับ\n- รหัสเครื่อง (Machine ID): ${cachedCurrentMachineId}`;
+    if (custName) lineMsg += `\n- ชื่อลูกค้า/บริษัท: ${custName}`;
+    if (phone) lineMsg += `\n- เบอร์โทรติดต่อ: ${phone}`;
+    lineMsg += `\nขอบคุณครับ`;
+
     navigator.clipboard.writeText(lineMsg).then(() => {
       btnCopyLineMsg.innerHTML = '✅ <span>คัดลอกข้อความแล้ว!</span>';
       setTimeout(() => {
-        btnCopyLineMsg.innerHTML = '💬 <span>คัดลอกข้อความส่ง LINE</span>';
+        btnCopyLineMsg.innerHTML = '💬 <span>คัดลอกส่ง LINE</span>';
       }, 2500);
     });
+  });
+}
+
+// Send Direct Email Request (Direct to mongkholkp001@gmail.com via backend)
+const btnSendEmailRequest = document.getElementById('btn-send-email-request');
+if (btnSendEmailRequest) {
+  btnSendEmailRequest.addEventListener('click', async () => {
+    const reqLicName = document.getElementById('req-lic-name');
+    const reqLicPhone = document.getElementById('req-lic-phone');
+    const custName = (reqLicName ? reqLicName.value : '').trim();
+    const phone = (reqLicPhone ? reqLicPhone.value : '').trim();
+    if (!custName) {
+      alert('กรุณาระบุชื่อลูกค้าหรือชื่อบริษัทของคุณก่อนกดส่ง');
+      if (reqLicName) reqLicName.focus();
+      return;
+    }
+
+    try {
+      btnSendEmailRequest.disabled = true;
+      btnSendEmailRequest.innerHTML = '<span>กำลังส่งข้อมูลเข้าอีเมล Admin...</span>';
+
+      const res = await fetch('/api/license/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_name: custName,
+          phone: phone,
+          machine_id: cachedCurrentMachineId
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (licActionAlert) {
+          licActionAlert.className = 'p-3 rounded-xl text-xs bg-emerald-500/20 border border-emerald-500/40 text-emerald-300';
+          licActionAlert.innerHTML = `✅ <b>ส่งข้อมูลสำเร็จเรียบร้อย!</b><br>ระบบได้ส่งคำขอพร้อมรหัสเครื่องนี้ไปยังอีเมล <b>mongkholkp001@gmail.com</b> เรียบร้อยแล้ว กรุณารอรับรหัสเปิดใช้งานครับ`;
+          licActionAlert.classList.remove('hidden');
+        }
+        btnSendEmailRequest.innerHTML = '✅ <span>ส่งคำขอสำเร็จแล้ว</span>';
+      } else {
+        alert('ส่งคำขอไม่สำเร็จ: ' + (data.detail || 'เกิดข้อผิดพลาด'));
+        btnSendEmailRequest.innerHTML = '✉️ <span>ส่งคำขอเปิดใช้งานเข้าอีเมล Admin ทันที</span>';
+      }
+    } catch (err) {
+      alert('เกิดข้อผิดพลาดในการส่ง: ' + err.message);
+      btnSendEmailRequest.innerHTML = '✉️ <span>ส่งคำขอเปิดใช้งานเข้าอีเมล Admin ทันที</span>';
+    } finally {
+      btnSendEmailRequest.disabled = false;
+    }
   });
 }
 

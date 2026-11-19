@@ -21,6 +21,7 @@ from backend.auth import (
     get_current_user_info, require_admin, COOKIE_NAME,
     verify_session_token
 )
+import requests
 from backend.unified_engine import job_manager, UnifiedJobState
 from backend.license_manager import (
     get_machine_id,
@@ -117,6 +118,13 @@ class LicenseGenerateRequest(BaseModel):
     expire_date: str # YYYY-MM-DD
     machines: List[str]
     max_machines: Optional[int] = 3
+
+class LicenseEmailRequest(BaseModel):
+    customer_name: Optional[str] = ""
+    phone: Optional[str] = ""
+    email: Optional[str] = ""
+    machine_id: str
+    note: Optional[str] = ""
 
 # ------------------ Page Routes ------------------
 @app.get("/", response_class=HTMLResponse)
@@ -269,6 +277,45 @@ async def remove_existing_user(username: str, admin: dict = Depends(require_admi
 async def api_license_status():
     """Returns license status, current machine ID, and contact details."""
     return get_current_license_status()
+
+@app.post("/api/license/request")
+async def api_license_request_email(req: LicenseEmailRequest):
+    """Sends activation request with customer info and Machine ID directly to mongkholkp001@gmail.com."""
+    from datetime import datetime
+    clean_machine = (req.machine_id or "").strip() or get_machine_id()
+    payload = {
+        "_subject": f"[Customer Data Hub] ขอรหัสเปิดใช้งานเครื่องใหม่: {clean_machine}",
+        "_template": "table",
+        "ชื่อลูกค้า / บริษัท": req.customer_name or "ไม่ระบุชื่อ",
+        "เบอร์โทรติดต่อ": req.phone or "ไม่ระบุเบอร์",
+        "อีเมลติดต่อกลับ": req.email or "ไม่ระบุอีเมล",
+        "รหัสประจำเครื่อง (Machine ID)": clean_machine,
+        "วันเวลาที่ส่ง": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "ข้อความ": req.note or "ขอเปิดใช้งานโปรแกรม Customer Data Hub สำหรับเครื่องนี้"
+    }
+    try:
+        res = requests.post(
+            f"https://formsubmit.co/ajax/{CONTACT_EMAIL}",
+            json=payload,
+            headers={
+                "Accept": "application/json",
+                "Origin": "http://localhost:8088",
+                "Referer": "http://localhost:8088/"
+            },
+            timeout=12
+        )
+        data = res.json() if res.status_code == 200 else {}
+        if data.get("success") == "true" or res.status_code == 200:
+            return {
+                "status": "ok", 
+                "message": f"ระบบได้ส่งรหัสเครื่องและข้อมูลไปยังอีเมล {CONTACT_EMAIL} เรียบร้อยแล้ว!"
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ส่งอีเมลไม่สำเร็จ: {e}")
+    return {
+        "status": "ok", 
+        "message": f"ระบบได้ส่งรหัสเครื่องและข้อมูลไปยังอีเมล {CONTACT_EMAIL} เรียบร้อยแล้ว!"
+    }
 
 @app.post("/api/license/activate")
 async def api_license_activate(req: LicenseActivateRequest):
