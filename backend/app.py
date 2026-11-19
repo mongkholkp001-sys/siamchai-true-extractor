@@ -480,7 +480,7 @@ async def api_license_approve(
     )
 
 @app.get("/api/license/check-online")
-async def api_license_check_online(mch: str):
+async def api_license_check_online(mch: str, request: Request):
     """
     Called by client machines (localhost:8088) to check if admin approved their machine.
     Queries local DB first; if not found, queries the Central VPS Server (119.10.137.52:8000).
@@ -493,17 +493,27 @@ async def api_license_check_online(mch: str):
     if local_rec.get("approved"):
         return local_rec
 
-    # 2. If running locally (not the VPS itself), query Central Server
-    try:
-        r = requests.get(f"{CENTRAL_SERVER_URL}/api/license/check-online?mch={clean_mch}", timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            if data.get("approved") and data.get("license_key"):
-                # Automatically save and activate license on client's computer!
-                save_and_activate_license(data["license_key"])
-                return data
-    except Exception:
-        pass
+    # 2. Only query Central Server if we are NOT on the Central Server itself!
+    # (Prevents self-referential deadlock when called on 119.10.137.52)
+    host_hdr = (request.headers.get("host") or "").lower()
+    is_central = (
+        "119.10.137.52" in host_hdr
+        or "119.10.137.52" in get_lan_ip()
+        or os.path.exists("/root/siamchai-true-extractor")
+        or os.environ.get("IS_CENTRAL_SERVER") == "1"
+        or CENTRAL_SERVER_URL.lower().rstrip('/') in str(request.url).lower()
+    )
+    if not is_central:
+        try:
+            r = requests.get(f"{CENTRAL_SERVER_URL}/api/license/check-online?mch={clean_mch}", timeout=3)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("approved") and data.get("license_key"):
+                    # Automatically save and activate license on client's computer!
+                    save_and_activate_license(data["license_key"])
+                    return data
+        except Exception:
+            pass
 
     return {"approved": False, "machine_id": clean_mch}
 
