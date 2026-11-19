@@ -10,6 +10,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from backend.siamchai_crawler import GLOBAL_DRIVER_LOCK
 from selenium.webdriver.common.action_chains import ActionChains
 
 TRUE_LOGIN_URL = "https://ism-shop.truecorp.co.th/login/"
@@ -134,11 +135,21 @@ class TrueCrawler:
             options.add_argument(a)
 
         driver_path = shutil.which("chromedriver") or ("/usr/bin/chromedriver" if os.path.exists("/usr/bin/chromedriver") else None)
-        if driver_path:
-            from selenium.webdriver.chrome.service import Service
-            self.driver = webdriver.Chrome(service=Service(driver_path), options=options)
-        else:
-            self.driver = webdriver.Chrome(options=options)
+        last_err = None
+        with GLOBAL_DRIVER_LOCK:
+            for init_attempt in range(1, 4):
+                try:
+                    if driver_path:
+                        from selenium.webdriver.chrome.service import Service
+                        self.driver = webdriver.Chrome(service=Service(driver_path), options=options)
+                    else:
+                        self.driver = webdriver.Chrome(options=options)
+                    break
+                except Exception as e:
+                    last_err = e
+                    time.sleep(2)
+            if not self.driver and last_err:
+                raise last_err
 
         self.driver.set_page_load_timeout(60)
         self.driver.implicitly_wait(3)

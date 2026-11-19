@@ -24,6 +24,8 @@ OUTPUT_COLUMNS = [
     "ความสัมพันธ์", "ที่อยู่ผู้ค้ำ", "ที่ทำงานผู้ค้ำ"
 ]
 
+GLOBAL_DRIVER_LOCK = threading.Lock()
+
 class SiamchaiCrawler:
     def __init__(
         self,
@@ -156,11 +158,21 @@ class SiamchaiCrawler:
                 options.add_argument(a)
 
             driver_path = shutil.which("chromedriver") or ("/usr/bin/chromedriver" if os.path.exists("/usr/bin/chromedriver") else None)
-            if driver_path:
-                from selenium.webdriver.chrome.service import Service
-                self.driver = webdriver.Chrome(service=Service(driver_path), options=options)
-            else:
-                self.driver = webdriver.Chrome(options=options)
+            last_err = None
+            with GLOBAL_DRIVER_LOCK:
+                for init_attempt in range(1, 4):
+                    try:
+                        if driver_path:
+                            from selenium.webdriver.chrome.service import Service
+                            self.driver = webdriver.Chrome(service=Service(driver_path), options=options)
+                        else:
+                            self.driver = webdriver.Chrome(options=options)
+                        break
+                    except Exception as e:
+                        last_err = e
+                        time.sleep(2)
+                if not self.driver and last_err:
+                    raise last_err
 
         self.driver.set_page_load_timeout(45)
         self.driver.implicitly_wait(2)

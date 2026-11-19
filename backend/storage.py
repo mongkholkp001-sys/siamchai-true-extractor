@@ -44,6 +44,20 @@ if os.path.exists(bundle_data):
         except Exception:
             pass
 
+# Ensure static files exist in BASE_DIR and C:\Siamchai_True_Hub
+bundle_static = os.path.join(BUNDLE_DIR, "static")
+for target_static_dir in [os.path.join(BASE_DIR, "static"), r"C:\Siamchai_True_Hub\static"]:
+    try:
+        os.makedirs(target_static_dir, exist_ok=True)
+        if os.path.exists(bundle_static):
+            for item in os.listdir(bundle_static):
+                s_file = os.path.join(bundle_static, item)
+                d_file = os.path.join(target_static_dir, item)
+                if not os.path.exists(d_file) or os.path.getmtime(s_file) > os.path.getmtime(d_file):
+                    shutil.copy2(s_file, d_file)
+    except Exception:
+        pass
+
 DEFAULT_CONFIG = {
     # Web Dashboard Auth
     "web_username": "admin",

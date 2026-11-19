@@ -254,60 +254,57 @@ def siamchai_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: 
                 job.add_log(f"🟣 [สยามชัย {i}/{total}] เลข {cid}: (ข้อมูลเดิม) {name} ({status})")
                 continue
 
-            # Periodic driver recycling every 60 queries to prevent memory leaks / browser freeze
-            if i > 1 and (i - 1) % 60 == 0:
-                job.add_log(f"🧹 [สยามชัย] เคลียร์หน่วยความจำเบราว์เซอร์อัตโนมัติ (ครบ {i-1} รายการ) เพื่อคงความเร็วและความเสถียร...")
-                try:
-                    sc_crawler.recover_driver_session()
-                except Exception as rec_err:
-                    job.add_log(f"⚠️ เคลียร์หน่วยความจำเบราว์เซอร์สยามชัย: {rec_err}")
-
             res = None
             max_attempts = 2
-            for attempt in range(1, max_attempts + 1):
-                if job.stop_requested:
-                    break
-                try:
-                    # 1. Health check & session recovery before search
-                    sc_crawler.recover_session_if_needed()
+            try:
+                for attempt in range(1, max_attempts + 1):
+                    if job.stop_requested:
+                        break
+                    try:
+                        # 1. Health check & session recovery before search
+                        sc_crawler.recover_session_if_needed()
 
-                    # 2. Search CID
-                    res = sc_crawler.search_one(cid)
+                        # 2. Search CID
+                        res = sc_crawler.search_one(cid)
 
-                    # If status indicates an internal error or dead driver, raise to trigger retry
-                    st = str(res.get("สถานะ", ""))
-                    if st.startswith("Error") or "invalid session id" in st.lower():
-                        raise RuntimeError(st)
+                        # If status indicates an internal error or dead driver, raise to trigger retry
+                        st = str(res.get("สถานะ", ""))
+                        if st.startswith("Error") or "invalid session id" in st.lower():
+                            raise RuntimeError(st)
 
-                    # Successful search completed
-                    break
+                        # Successful search completed
+                        break
 
-                except Exception as e:
-                    err_msg = str(e)
-                    is_fatal_driver_err = any(k in err_msg.lower() for k in [
-                        "invalid session id", "no such window", "disconnected",
-                        "target window already closed", "connection refused", "maxretryerror"
-                    ])
-                    if attempt < max_attempts and not job.stop_requested:
-                        job.add_log(f"⚠️ [สยามชัย {i}/{total}] เลข {cid} ขัดข้อง ({err_msg[:60]}) -> กำลังรีเช็กใหม่อัตโนมัติ (ครั้งที่ {attempt+1}/{max_attempts})...")
-                        if is_fatal_driver_err:
-                            try:
-                                sc_crawler.recover_driver_session()
-                            except Exception as rec_e:
-                                job.add_log(f"⚠️ รีสตาร์ทเบราว์เซอร์สยามชัยไม่สำเร็จ: {rec_e}")
-                                time.sleep(3)
+                    except Exception as e:
+                        err_msg = str(e)
+                        is_fatal_driver_err = any(k in err_msg.lower() for k in [
+                            "invalid session id", "no such window", "disconnected",
+                            "target window already closed", "connection refused", "maxretryerror"
+                        ])
+                        if attempt < max_attempts and not job.stop_requested:
+                            job.add_log(f"⚠️ [สยามชัย {i}/{total}] เลข {cid} ขัดข้อง ({err_msg[:60]}) -> กำลังรีเช็กใหม่อัตโนมัติ (ครั้งที่ {attempt+1}/{max_attempts})...")
+                            if is_fatal_driver_err:
+                                try:
+                                    sc_crawler.recover_driver_session()
+                                except Exception as rec_e:
+                                    job.add_log(f"⚠️ รีสตาร์ทเบราว์เซอร์สยามชัยไม่สำเร็จ: {rec_e}")
+                                    time.sleep(3)
+                            else:
+                                try:
+                                    sc_crawler.ensure_back_to_search()
+                                except Exception:
+                                    sc_crawler.recover_driver_session()
+                            time.sleep(1.5)
                         else:
-                            try:
-                                sc_crawler.ensure_back_to_search()
-                            except Exception:
-                                sc_crawler.recover_driver_session()
-                        time.sleep(1.5)
-                    else:
-                        job.add_log(f"❌ [สยามชัย {i}/{total}] เลข {cid} ตรวจสอบครบ {max_attempts} ครั้งแล้ว: {err_msg[:80]}")
-                        res = {"สถานะ": f"Error: {err_msg}", "ชื่อ-นามสกุล": "-"}
+                            job.add_log(f"❌ [สยามชัย {i}/{total}] เลข {cid} ตรวจสอบครบ {max_attempts} ครั้งแล้ว: {err_msg[:80]}")
+                            res = {"สถานะ": f"Error: {err_msg}", "ชื่อ-นามสกุล": "-"}
 
-            if not res:
-                res = {"สถานะ": "ไม่พบข้อมูล", "ชื่อ-นามสกุล": "-"}
+                if not res:
+                    res = {"สถานะ": "ไม่พบข้อมูล", "ชื่อ-นามสกุล": "-"}
+
+            except Exception as cid_fatal:
+                job.add_log(f"⚠️ [สยามชัย {i}/{total}] เลข {cid} เกิดข้อผิดพลาดในการดึงข้อมูล: {cid_fatal}")
+                res = {"สถานะ": f"Error: {cid_fatal}", "ชื่อ-นามสกุล": "-"}
 
             with job.lock:
                 job.sc_results[cid] = res
@@ -392,64 +389,72 @@ def true_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict
                 job.add_log(f"🔴 [ทรู {i}/{total}] เลข {cid}: (ข้อมูลเดิม) พบ {total_cnt} เบอร์ ({all_phones}) [Active: {active_cnt}]")
                 continue
 
-            # Periodic driver recycling every 60 queries to prevent memory leaks / browser freeze
-            if i > 1 and (i - 1) % 60 == 0:
-                job.add_log(f"🧹 [ทรู] เคลียร์หน่วยความจำเบราว์เซอร์อัตโนมัติ (ครบ {i-1} รายการ) เพื่อคงความเร็วและความเสถียร...")
-                try:
-                    tr_crawler.recover_driver_session()
-                except Exception as rec_err:
-                    job.add_log(f"⚠️ เคลียร์หน่วยความจำเบราว์เซอร์ทรู: {rec_err}")
-
             res = None
             max_attempts = 2
-            for attempt in range(1, max_attempts + 1):
-                if job.stop_requested:
-                    break
-                try:
-                    # Health check: if driver dead or None or logged out, recover
-                    tr_crawler.recover_session_if_needed()
+            try:
+                for attempt in range(1, max_attempts + 1):
+                    if job.stop_requested:
+                        break
+                    try:
+                        # Health check: if driver dead or None or logged out, recover
+                        tr_crawler.recover_session_if_needed()
 
-                    res = tr_crawler.search_one(cid)
-                    st = str(res.get("status", ""))
-                    if st.startswith("Error") or "invalid session id" in st.lower() or "ผิดพลาด" in st:
-                        raise RuntimeError(st)
+                        res = tr_crawler.search_one(cid)
+                        st = str(res.get("status", ""))
+                        if st.startswith("Error") or "invalid session id" in st.lower() or "ผิดพลาด" in st:
+                            raise RuntimeError(st)
 
-                    break
+                        break
 
-                except Exception as e:
-                    err_msg = str(e)
-                    is_fatal_driver_err = any(k in err_msg.lower() for k in [
-                        "invalid session id", "no such window", "disconnected",
-                        "target window already closed", "connection refused", "maxretryerror"
-                    ])
-                    if attempt < max_attempts and not job.stop_requested:
-                        job.add_log(f"⚠️ [ทรู {i}/{total}] เลข {cid} ขัดข้อง ({err_msg[:60]}) -> กำลังรีเช็กใหม่อัตโนมัติ (ครั้งที่ {attempt+1}/{max_attempts})...")
-                        try:
-                            tr_crawler.recover_driver_session()
-                        except Exception as rec_e:
-                            job.add_log(f"⚠️ รีสตาร์ทเบราว์เซอร์ทรูไม่สำเร็จ: {rec_e}")
-                            time.sleep(3)
-                        time.sleep(1.5)
-                    else:
-                        job.add_log(f"❌ [ทรู {i}/{total}] เลข {cid} ตรวจสอบครบ {max_attempts} ครั้งแล้ว: {err_msg[:80]}")
-                        res = {
-                            "cid": cid,
-                            "name": "-",
-                            "status": f"Error: {err_msg}",
-                            "total_count": 0,
-                            "count": 0,
-                            "all_phones": "-",
-                            "active_count": 0,
-                            "active_phones": "-",
-                            "phone_details": "-",
-                            "details": []
-                        }
+                    except Exception as e:
+                        err_msg = str(e)
+                        is_fatal_driver_err = any(k in err_msg.lower() for k in [
+                            "invalid session id", "no such window", "disconnected",
+                            "target window already closed", "connection refused", "maxretryerror"
+                        ])
+                        if attempt < max_attempts and not job.stop_requested:
+                            job.add_log(f"⚠️ [ทรู {i}/{total}] เลข {cid} ขัดข้อง ({err_msg[:60]}) -> กำลังรีเช็กใหม่อัตโนมัติ (ครั้งที่ {attempt+1}/{max_attempts})...")
+                            try:
+                                tr_crawler.recover_driver_session()
+                            except Exception as rec_e:
+                                job.add_log(f"⚠️ รีสตาร์ทเบราว์เซอร์ทรูไม่สำเร็จ: {rec_e}")
+                                time.sleep(3)
+                            time.sleep(1.5)
+                        else:
+                            job.add_log(f"❌ [ทรู {i}/{total}] เลข {cid} ตรวจสอบครบ {max_attempts} ครั้งแล้ว: {err_msg[:80]}")
+                            res = {
+                                "cid": cid,
+                                "name": "-",
+                                "status": f"Error: {err_msg}",
+                                "total_count": 0,
+                                "count": 0,
+                                "all_phones": "-",
+                                "active_count": 0,
+                                "active_phones": "-",
+                                "phone_details": "-",
+                                "details": []
+                            }
 
-            if not res:
+                if not res:
+                    res = {
+                        "cid": cid,
+                        "name": "-",
+                        "status": "ไม่พบข้อมูล",
+                        "total_count": 0,
+                        "count": 0,
+                        "all_phones": "-",
+                        "active_count": 0,
+                        "active_phones": "-",
+                        "phone_details": "-",
+                        "details": []
+                    }
+
+            except Exception as cid_fatal:
+                job.add_log(f"⚠️ [ทรู {i}/{total}] เลข {cid} เกิดข้อผิดพลาดในการดึงข้อมูล: {cid_fatal}")
                 res = {
                     "cid": cid,
                     "name": "-",
-                    "status": "ไม่พบข้อมูล",
+                    "status": f"Error: {cid_fatal}",
                     "total_count": 0,
                     "count": 0,
                     "all_phones": "-",

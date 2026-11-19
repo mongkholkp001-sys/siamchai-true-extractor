@@ -132,6 +132,19 @@ class LicenseEmailRequest(BaseModel):
     machine_id: str
     note: Optional[str] = ""
 
+def find_static_file(filename: str) -> Optional[str]:
+    candidates = [
+        os.path.join(STATIC_DIR, filename),
+        os.path.join(BUNDLE_DIR, "static", filename),
+        os.path.join(BASE_DIR, "static", filename),
+        os.path.join(r"C:\Siamchai_True_Hub", "static", filename),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", filename),
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
 # ------------------ Page Routes ------------------
 @app.get("/", response_class=HTMLResponse)
 async def serve_index(request: Request):
@@ -148,17 +161,17 @@ async def serve_index(request: Request):
     if not is_authenticated:
         return HTMLResponse("<script>window.location.href='/login';</script>")
 
-    index_file = os.path.join(STATIC_DIR, "index.html")
-    if os.path.exists(index_file):
-        with open(index_file, "r", encoding="utf-8") as f:
+    index_path = find_static_file("index.html")
+    if index_path and os.path.exists(index_path):
+        with open(index_path, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
     return HTMLResponse("<h1>Unified Extractor Ready</h1>")
 
 @app.get("/login", response_class=HTMLResponse)
 async def serve_login():
-    login_file = os.path.join(STATIC_DIR, "login.html")
-    if os.path.exists(login_file):
-        with open(login_file, "r", encoding="utf-8") as f:
+    login_path = find_static_file("login.html")
+    if login_path and os.path.exists(login_path):
+        with open(login_path, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
     return HTMLResponse("<h1>Login Page Missing</h1>")
 

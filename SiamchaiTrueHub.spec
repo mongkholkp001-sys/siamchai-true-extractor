@@ -1,9 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_all
 
+ROOT_DIR = os.path.dirname(os.path.abspath(SPEC)) if 'SPEC' in locals() else r"C:\Users\comk25\.gemini\antigravity\scratch\siamchai_true_hub"
+
 datas = [
-    ('static', 'static'),
-    ('data', 'data'),
+    (os.path.join(ROOT_DIR, 'static'), 'static'),
+    (os.path.join(ROOT_DIR, 'data'), 'data'),
 ]
 binaries = []
 hiddenimports = [
