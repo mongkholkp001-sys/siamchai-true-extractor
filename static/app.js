@@ -19,11 +19,13 @@ if (document.getElementById('user-display')) {
 async function initCurrentUser() {
   const btnUsersMgmt = document.getElementById('btn-users-mgmt');
   const btnSettings = document.getElementById('btn-settings');
+  const btnOpenLicGen = document.getElementById('btn-open-license-gen');
 
   // Immediately show admin buttons if logged-in user is admin
   if (authUser.toLowerCase() === 'admin') {
     if (btnUsersMgmt) btnUsersMgmt.classList.remove('hidden');
     if (btnSettings) btnSettings.classList.remove('hidden');
+    if (btnOpenLicGen) btnOpenLicGen.classList.remove('hidden');
   }
 
   try {
@@ -52,10 +54,12 @@ async function initCurrentUser() {
         if (btnUsersMgmt) btnUsersMgmt.classList.remove('hidden');
         if (btnSettings) btnSettings.classList.remove('hidden');
         if (btnResetAll) btnResetAll.classList.remove('hidden');
+        if (btnOpenLicGen) btnOpenLicGen.classList.remove('hidden');
       } else {
         if (btnUsersMgmt) btnUsersMgmt.classList.add('hidden');
         if (btnSettings) btnSettings.classList.add('hidden');
         if (btnResetAll) btnResetAll.classList.add('hidden');
+        if (btnOpenLicGen) btnOpenLicGen.classList.add('hidden');
       }
     }
   } catch (err) {
@@ -1238,3 +1242,340 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
     window.location.href = '/login';
   }
 });
+
+// ==========================================================================
+// 🔒 LICENSE & ACTIVATION MANAGEMENT SYSTEM (Hardware Machine ID & Expiry)
+// ==========================================================================
+let cachedLicenseData = null;
+let cachedCurrentMachineId = '';
+
+const btnLicenseBadge = document.getElementById('btn-license-badge');
+const licenseIndicator = document.getElementById('license-indicator');
+const licenseBadgeText = document.getElementById('license-badge-text');
+
+// Activation Modal Elements
+const modalLicense = document.getElementById('modal-license');
+const btnCloseLicense = document.getElementById('btn-close-license');
+const btnDismissLicense = document.getElementById('btn-dismiss-license');
+const licStatusBanner = document.getElementById('lic-status-banner');
+const licStatusTitle = document.getElementById('lic-status-title');
+const licStatusDesc = document.getElementById('lic-status-desc');
+const licMachineId = document.getElementById('lic-machine-id');
+const btnCopyMachineId = document.getElementById('btn-copy-machine-id');
+const btnMailLicense = document.getElementById('btn-mail-license');
+const btnCopyLineMsg = document.getElementById('btn-copy-line-msg');
+const licKeyInput = document.getElementById('lic-key-input');
+const licActionAlert = document.getElementById('lic-action-alert');
+const btnSubmitLicense = document.getElementById('btn-submit-license');
+
+// Admin Key Generator Modal Elements
+const modalLicenseGen = document.getElementById('modal-license-gen');
+const btnOpenLicenseGen = document.getElementById('btn-open-license-gen');
+const btnCloseLicenseGen = document.getElementById('btn-close-license-gen');
+const btnCancelLicenseGen = document.getElementById('btn-cancel-license-gen');
+const genLicCustomer = document.getElementById('gen-lic-customer');
+const genLicExpire = document.getElementById('gen-lic-expire');
+const btnGenAdd30 = document.getElementById('btn-gen-add-30');
+const btnGenAdd90 = document.getElementById('btn-gen-add-90');
+const btnGenAdd365 = document.getElementById('btn-gen-add-365');
+const btnGenUseMyMachine = document.getElementById('btn-gen-use-my-machine');
+const genLicMch1 = document.getElementById('gen-lic-mch-1');
+const genLicMch2 = document.getElementById('gen-lic-mch-2');
+const genLicMch3 = document.getElementById('gen-lic-mch-3');
+const btnDoLicenseGen = document.getElementById('btn-do-license-gen');
+const genLicResultBox = document.getElementById('gen-lic-result-box');
+const genLicOutput = document.getElementById('gen-lic-output');
+const btnCopyGenLic = document.getElementById('btn-copy-gen-lic');
+
+async function checkLicenseStatus(autoOpenModalOnInvalid = false) {
+  try {
+    const res = await fetch('/api/license/status');
+    const data = await res.json();
+    cachedLicenseData = data;
+    cachedCurrentMachineId = data.current_machine || '';
+
+    if (licMachineId) {
+      licMachineId.value = cachedCurrentMachineId || 'ไม่สามารถระบุรหัสเครื่องได้';
+    }
+
+    // Configure Mailto link
+    if (btnMailLicense) {
+      const subject = encodeURIComponent(`ขอรหัสเปิดใช้งาน Customer Data Hub [${cachedCurrentMachineId}]`);
+      const body = encodeURIComponent(
+        `เรียน คุณมงคล,\n\nขอเปิดใช้งานโปรแกรม Customer Data Hub สำหรับเครื่องนี้ครับ\n- รหัสประจำเครื่อง (Machine ID): ${cachedCurrentMachineId}\n- ชื่อลูกค้า/บริษัท: [กรุณาระบุ]\n- เบอร์โทรศัพท์ติดต่อ: [กรุณาระบุ]\n\nขอบคุณครับ`
+      );
+      btnMailLicense.href = `mailto:${data.contact_email || 'mongkholkp001@gmail.com'}?subject=${subject}&body=${body}`;
+    }
+
+    if (data.valid) {
+      // Valid License UI
+      if (licenseIndicator) {
+        licenseIndicator.className = 'w-2 h-2 rounded-full bg-emerald-400';
+      }
+      if (licenseBadgeText) {
+        licenseBadgeText.textContent = `ใบอนุญาต: ${data.customer} (เหลือ ${data.days_left} วัน)`;
+      }
+      if (btnLicenseBadge) {
+        btnLicenseBadge.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-medium border border-emerald-500/30 transition-colors';
+        btnLicenseBadge.title = `ใบอนุญาต: ${data.customer}\nหมดอายุ: ${data.expire_date} (อีก ${data.days_left} วัน)\nเครื่องที่ ${data.machine_slot || 1} จากทั้งหมด ${data.max_machines || 3} เครื่อง\nคลิกเพื่อดูรายละเอียด`;
+      }
+
+      // Update Modal banner if open
+      if (licStatusBanner) {
+        licStatusBanner.className = 'p-3.5 rounded-xl border text-xs flex items-start gap-3 bg-emerald-500/10 border-emerald-500/30 text-emerald-200';
+      }
+      if (licStatusTitle) {
+        licStatusTitle.textContent = `✅ ใบอนุญาตใช้งานถูกต้อง (${data.customer})`;
+        licStatusTitle.className = 'font-semibold text-emerald-300';
+      }
+      if (licStatusDesc) {
+        licStatusDesc.textContent = `ใช้งานได้ถึง: ${data.expire_date} (เหลือ ${data.days_left} วัน) | อนุมัติเครื่องที่ ${data.machine_slot || 1}/${data.max_machines || 3} เครื่อง`;
+      }
+    } else {
+      // Invalid / Expired / Unauthorized Machine UI
+      if (licenseIndicator) {
+        licenseIndicator.className = 'w-2 h-2 rounded-full bg-rose-500 animate-pulse';
+      }
+      if (licenseBadgeText) {
+        licenseBadgeText.textContent = data.status === 'EXPIRED' ? '⚠️ ใบอนุญาตหมดอายุ' : '🔒 ยังไม่เปิดใช้งาน';
+      }
+      if (btnLicenseBadge) {
+        btnLicenseBadge.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 text-xs font-semibold border border-rose-500/40 transition-colors animate-pulse';
+        btnLicenseBadge.title = `${data.message || 'ใบอนุญาตไม่ถูกต้อง'}\nคลิกเพื่อใส่รหัสเปิดใช้งาน`;
+      }
+
+      if (licStatusBanner) {
+        licStatusBanner.className = 'p-3.5 rounded-xl border text-xs flex items-start gap-3 bg-rose-500/15 border-rose-500/40 text-rose-200';
+      }
+      if (licStatusTitle) {
+        licStatusTitle.textContent = `⚠️ ${data.message || 'ยังไม่เปิดใช้งานใบอนุญาตบนเครื่องนี้'}`;
+        licStatusTitle.className = 'font-semibold text-rose-300';
+      }
+      if (licStatusDesc) {
+        licStatusDesc.textContent = `กรุณาส่งรหัสเครื่องนี้ให้ผู้ดูแลระบบ (mongkholkp001@gmail.com) เพื่อรับรหัสเปิดใช้งาน (License Key)`;
+      }
+
+      if (autoOpenModalOnInvalid && modalLicense) {
+        modalLicense.classList.remove('hidden');
+      }
+    }
+  } catch (err) {
+    console.error('Failed to check license status:', err);
+  }
+}
+
+// Open modal on click
+if (btnLicenseBadge) {
+  btnLicenseBadge.addEventListener('click', () => {
+    if (modalLicense) {
+      modalLicense.classList.remove('hidden');
+      if (licActionAlert) licActionAlert.classList.add('hidden');
+    }
+  });
+}
+
+if (btnCloseLicense) {
+  btnCloseLicense.addEventListener('click', () => {
+    if (modalLicense) modalLicense.classList.add('hidden');
+  });
+}
+
+if (btnDismissLicense) {
+  btnDismissLicense.addEventListener('click', () => {
+    if (modalLicense) modalLicense.classList.add('hidden');
+  });
+}
+
+// Copy Machine ID button
+if (btnCopyMachineId) {
+  btnCopyMachineId.addEventListener('click', () => {
+    if (!cachedCurrentMachineId) return;
+    navigator.clipboard.writeText(cachedCurrentMachineId).then(() => {
+      btnCopyMachineId.innerHTML = '✅ <span>คัดลอกแล้ว!</span>';
+      setTimeout(() => {
+        btnCopyMachineId.innerHTML = '📋 <span>คัดลอก</span>';
+      }, 2000);
+    });
+  });
+}
+
+// Copy LINE Message button
+if (btnCopyLineMsg) {
+  btnCopyLineMsg.addEventListener('click', () => {
+    if (!cachedCurrentMachineId) return;
+    const lineMsg = `เรียน คุณมงคล,\nขอเปิดใช้งานโปรแกรม Customer Data Hub สำหรับเครื่องนี้ครับ\n- รหัสเครื่อง (Machine ID): ${cachedCurrentMachineId}\n- ชื่อลูกค้า/บริษัท: [กรุณาระบุชื่อ]\nขอบคุณครับ`;
+    navigator.clipboard.writeText(lineMsg).then(() => {
+      btnCopyLineMsg.innerHTML = '✅ <span>คัดลอกข้อความแล้ว!</span>';
+      setTimeout(() => {
+        btnCopyLineMsg.innerHTML = '💬 <span>คัดลอกข้อความส่ง LINE</span>';
+      }, 2500);
+    });
+  });
+}
+
+// Submit License Key Activation
+if (btnSubmitLicense) {
+  btnSubmitLicense.addEventListener('click', async () => {
+    const key = (licKeyInput ? licKeyInput.value : '').trim();
+    if (!key) {
+      if (licActionAlert) {
+        licActionAlert.className = 'p-3 rounded-xl text-xs bg-rose-500/20 border border-rose-500/40 text-rose-300';
+        licActionAlert.textContent = 'กรุณาวางรหัส License Key ก่อนกดเปิดใช้งาน';
+        licActionAlert.classList.remove('hidden');
+      }
+      return;
+    }
+
+    try {
+      btnSubmitLicense.disabled = true;
+      btnSubmitLicense.innerHTML = '<span>กำลังตรวจสอบและเปิดใช้งาน...</span>';
+
+      const res = await fetch('/api/license/activate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ license_key: key })
+      });
+      const data = await res.json();
+
+      if (res.ok && data.valid) {
+        if (licActionAlert) {
+          licActionAlert.className = 'p-3 rounded-xl text-xs bg-emerald-500/20 border border-emerald-500/40 text-emerald-300';
+          licActionAlert.textContent = `🎉 เปิดใช้งานสำเร็จ! ยินดีต้อนรับคุณ ${data.customer} (ใช้งานได้ถึง ${data.expire_date})`;
+          licActionAlert.classList.remove('hidden');
+        }
+        if (licKeyInput) licKeyInput.value = '';
+        await checkLicenseStatus(false);
+        setTimeout(() => {
+          if (modalLicense) modalLicense.classList.add('hidden');
+        }, 1800);
+      } else {
+        if (licActionAlert) {
+          licActionAlert.className = 'p-3 rounded-xl text-xs bg-rose-500/20 border border-rose-500/40 text-rose-300';
+          licActionAlert.textContent = `❌ ${data.detail || data.message || 'รหัสเปิดใช้งานไม่ถูกต้อง'}`;
+          licActionAlert.classList.remove('hidden');
+        }
+      }
+    } catch (err) {
+      if (licActionAlert) {
+        licActionAlert.className = 'p-3 rounded-xl text-xs bg-rose-500/20 border border-rose-500/40 text-rose-300';
+        licActionAlert.textContent = `เกิดข้อผิดพลาดในการเชื่อมต่อ: ${err.message}`;
+        licActionAlert.classList.remove('hidden');
+      }
+    } finally {
+      btnSubmitLicense.disabled = false;
+      btnSubmitLicense.innerHTML = '🚀 <span>เปิดใช้งานระบบ (Activate)</span>';
+    }
+  });
+}
+
+// ------------------ Admin License Key Generator Handlers ------------------
+if (btnOpenLicenseGen) {
+  btnOpenLicenseGen.addEventListener('click', () => {
+    if (modalLicenseGen) {
+      modalLicenseGen.classList.remove('hidden');
+      if (genLicResultBox) genLicResultBox.classList.add('hidden');
+      // Default to 30 days
+      const d = new Date();
+      d.setDate(d.getDate() + 30);
+      if (genLicExpire) genLicExpire.value = d.toISOString().split('T')[0];
+    }
+  });
+}
+
+if (btnCloseLicenseGen) btnCloseLicenseGen.addEventListener('click', () => modalLicenseGen.classList.add('hidden'));
+if (btnCancelLicenseGen) btnCancelLicenseGen.addEventListener('click', () => modalLicenseGen.classList.add('hidden'));
+
+function setGenExpireDays(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  if (genLicExpire) genLicExpire.value = d.toISOString().split('T')[0];
+}
+
+if (btnGenAdd30) btnGenAdd30.addEventListener('click', () => setGenExpireDays(30));
+if (btnGenAdd90) btnGenAdd90.addEventListener('click', () => setGenExpireDays(90));
+if (btnGenAdd365) btnGenAdd365.addEventListener('click', () => setGenExpireDays(365));
+
+if (btnGenUseMyMachine) {
+  btnGenUseMyMachine.addEventListener('click', () => {
+    if (cachedCurrentMachineId && genLicMch1) {
+      genLicMch1.value = cachedCurrentMachineId;
+    }
+  });
+}
+
+if (btnDoLicenseGen) {
+  btnDoLicenseGen.addEventListener('click', async () => {
+    const cust = (genLicCustomer ? genLicCustomer.value : '').trim();
+    const exp = (genLicExpire ? genLicExpire.value : '').trim();
+    if (!cust) {
+      alert('กรุณาระบุชื่อลูกค้า / บริษัท');
+      return;
+    }
+    if (!exp) {
+      alert('กรุณาระบุวันหมดอายุ');
+      return;
+    }
+
+    const machines = [];
+    if (genLicMch1 && genLicMch1.value.trim()) machines.push(genLicMch1.value.trim().toUpperCase());
+    if (genLicMch2 && genLicMch2.value.trim()) machines.push(genLicMch2.value.trim().toUpperCase());
+    if (genLicMch3 && genLicMch3.value.trim()) machines.push(genLicMch3.value.trim().toUpperCase());
+
+    if (machines.length === 0) {
+      if (!confirm('คุณไม่ได้ระบุรหัสเครื่องใดๆ เลย ต้องการใส่รหัสเครื่องนี้เป็นค่าเริ่มต้นหรือไม่?')) {
+        return;
+      }
+      if (cachedCurrentMachineId) machines.push(cachedCurrentMachineId);
+    }
+
+    try {
+      btnDoLicenseGen.disabled = true;
+      btnDoLicenseGen.textContent = 'กำลังสร้างรหัส...';
+
+      const headers = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+      const res = await fetch('/api/license/generate', {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({
+          customer: cust,
+          expire_date: exp,
+          machines: machines,
+          max_machines: 3
+        })
+      });
+      const data = await res.json();
+
+      if (res.ok && data.license_key) {
+        if (genLicOutput) genLicOutput.value = data.license_key;
+        if (genLicResultBox) genLicResultBox.classList.remove('hidden');
+        alert(`🎉 สร้าง License Key สำหรับคุณ "${cust}" สำเร็จเรียบร้อยแล้ว!\nสามารถกดปุ่มคัดลอกรหัสเพื่อส่งให้ลูกค้าได้ทันที`);
+      } else {
+        alert('สร้างรหัสไม่สำเร็จ: ' + (data.detail || 'เกิดข้อผิดพลาด'));
+      }
+    } catch (err) {
+      alert('เกิดข้อผิดพลาด: ' + err.message);
+    } finally {
+      btnDoLicenseGen.disabled = false;
+      btnDoLicenseGen.textContent = '⚡ สร้างรหัสเปิดใช้งาน';
+    }
+  });
+}
+
+if (btnCopyGenLic) {
+  btnCopyGenLic.addEventListener('click', () => {
+    if (genLicOutput && genLicOutput.value) {
+      navigator.clipboard.writeText(genLicOutput.value).then(() => {
+        btnCopyGenLic.innerHTML = '✅ <span>คัดลอกเรียบร้อยแล้ว!</span>';
+        setTimeout(() => {
+          btnCopyGenLic.innerHTML = '📋 <span>คัดลอกรหัส</span>';
+        }, 2000);
+      });
+    }
+  });
+}
+
+// Initial License check on app load (prompt modal if not activated)
+checkLicenseStatus(true);
+

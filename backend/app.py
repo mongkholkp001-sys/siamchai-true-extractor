@@ -22,6 +22,13 @@ from backend.auth import (
     verify_session_token
 )
 from backend.unified_engine import job_manager, UnifiedJobState
+from backend.license_manager import (
+    get_machine_id,
+    get_current_license_status,
+    save_and_activate_license,
+    generate_license_key,
+    CONTACT_EMAIL
+)
 
 app = FastAPI(title="Siamchai & TrueCorp Unified Extractor")
 
@@ -101,6 +108,15 @@ class UpdateUserRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     password: str
+
+class LicenseActivateRequest(BaseModel):
+    license_key: str
+
+class LicenseGenerateRequest(BaseModel):
+    customer: str
+    expire_date: str # YYYY-MM-DD
+    machines: List[str]
+    max_machines: Optional[int] = 3
 
 # ------------------ Page Routes ------------------
 @app.get("/", response_class=HTMLResponse)
@@ -249,6 +265,36 @@ async def remove_existing_user(username: str, admin: dict = Depends(require_admi
         raise HTTPException(status_code=400, detail=str(e))
 
 # ------------------ Process & Control Endpoints ------------------
+@app.get("/api/license/status")
+async def api_license_status():
+    """Returns license status, current machine ID, and contact details."""
+    return get_current_license_status()
+
+@app.post("/api/license/activate")
+async def api_license_activate(req: LicenseActivateRequest):
+    """Activates the system using provided license key."""
+    res = save_and_activate_license(req.license_key)
+    if not res.get("valid"):
+        raise HTTPException(status_code=400, detail=res.get("message", "รหัสเปิดใช้งานไม่ถูกต้อง"))
+    return res
+
+@app.post("/api/license/generate")
+async def api_license_generate(req: LicenseGenerateRequest, admin: dict = Depends(require_admin)):
+    """Admin endpoint to generate a license key directly from dashboard."""
+    key = generate_license_key(
+        customer=req.customer,
+        expire_date=req.expire_date,
+        machines=req.machines,
+        max_machines=req.max_machines or 3
+    )
+    return {
+        "status": "ok",
+        "license_key": key,
+        "customer": req.customer,
+        "expire_date": req.expire_date,
+        "machines": req.machines
+    }
+
 @app.get("/api/status")
 async def get_status(job_id: Optional[str] = None, user: str = Depends(get_current_user)):
     if job_id:
@@ -260,6 +306,14 @@ async def get_status(job_id: Optional[str] = None, user: str = Depends(get_curre
 
 @app.post("/api/start")
 async def start_crawl(req: StartRequest, user: str = Depends(get_current_user)):
+    # Verify Machine Hardware ID and License validity before running
+    lic = get_current_license_status()
+    if not lic.get("valid"):
+        raise HTTPException(
+            status_code=403, 
+            detail=lic.get("message", "ระบบยังไม่ได้รับการเปิดใช้งาน หรือใบอนุญาตหมดอายุ กรุณาเปิดใช้งานก่อนเริ่มค้นหา")
+        )
+
     if not req.cids:
         raise HTTPException(status_code=400, detail="กรุณาระบุเลขค้นหาอย่างน้อย 1 รายการ")
 
