@@ -263,7 +263,7 @@ def siamchai_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: 
                     job.add_log(f"⚠️ เคลียร์หน่วยความจำเบราว์เซอร์สยามชัย: {rec_err}")
 
             res = None
-            max_attempts = 3
+            max_attempts = 2
             for attempt in range(1, max_attempts + 1):
                 if job.stop_requested:
                     break
@@ -401,7 +401,7 @@ def true_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict
                     job.add_log(f"⚠️ เคลียร์หน่วยความจำเบราว์เซอร์ทรู: {rec_err}")
 
             res = None
-            max_attempts = 3
+            max_attempts = 2
             for attempt in range(1, max_attempts + 1):
                 if job.stop_requested:
                     break
@@ -508,7 +508,7 @@ class JobQueueManager:
     Unlocks instant concurrent extraction for all users without waiting in queues.
     Automatically persists and retains all search jobs & Excel files for 3 days!
     """
-    def __init__(self, max_concurrent: int = 999):
+    def __init__(self, max_concurrent: int = 2):
         self.lock = threading.RLock()
         self.jobs: Dict[str, UnifiedJobState] = {}
         # Track active job ID per user (user_lower -> job_id)
@@ -587,15 +587,29 @@ class JobQueueManager:
         with self.lock:
             user_key = user.strip().lower()
 
-            # Prevent double click on the same user account while actively running or queued
+            # Auto-Reset / Graceful Overwrite: If this user already has an active or stuck job,
+            # automatically finalize the previous job so the new search starts immediately without manual reset!
             if user_key in self.user_active_jobs:
-                existing_id = self.user_active_jobs[user_key]
-                existing = self.jobs.get(existing_id)
-                if existing and existing.status in ["running", "starting", "queued"]:
-                    raise ValueError(
-                        f"บัญชี '{user}' กำลังมีงานค้นหากำลังทำงานหรืออยู่ในคิว ({existing.total} รายการ) "
-                        "กรุณารอให้งานเดิมเสร็จสิ้น หรือกดปุ่ม 'หยุดการทำงาน' ก่อนเริ่มงานใหม่"
-                    )
+                old_id = self.user_active_jobs[user_key]
+                old_job = self.jobs.get(old_id)
+                if old_job and old_job.status in ["running", "starting", "queued"]:
+                    old_job.stop_requested = True
+                    with old_job.lock:
+                        old_job.status = "stopped"
+                    if old_job.siamchai_crawler:
+                        try:
+                            old_job.siamchai_crawler.stop_requested = True
+                            old_job.siamchai_crawler.close()
+                        except Exception:
+                            pass
+                    if old_job.true_crawler:
+                        try:
+                            old_job.true_crawler.stop_requested = True
+                            old_job.true_crawler.close()
+                        except Exception:
+                            pass
+                    self._persist_job(old_job)
+                del self.user_active_jobs[user_key]
 
             job_id = f"job_{int(time.time())}_{user}"
             job = UnifiedJobState(user=user, job_id=job_id)
@@ -645,20 +659,21 @@ class JobQueueManager:
 
     def _run_job_wrapper(self, job: UnifiedJobState):
         try:
-            if job.stop_requested:
+            with self.execution_semaphore:
+                if job.stop_requested:
+                    with job.lock:
+                        job.status = "stopped"
+                    job.add_log("🛑 งานถูกยกเลิกก่อนเริ่มทำงาน")
+                    self._persist_job(job)
+                    return
+
                 with job.lock:
-                    job.status = "stopped"
-                job.add_log("🛑 งานถูกยกเลิกก่อนเริ่มทำงาน")
+                    job.status = "starting"
+                    job.queue_position = 0
+                job.add_log("🚀 ถึงคิวประมวลผลแล้ว! กำลังเปิดระบบและเริ่มค้นหาข้อมูล...")
                 self._persist_job(job)
-                return
 
-            with job.lock:
-                job.status = "starting"
-                job.queue_position = 0
-            job.add_log("🚀 กำลังเปิดระบบและเริ่มค้นหาข้อมูล (ทำงานทันที ไม่ต้องรอคิว)...")
-            self._persist_job(job)
-
-            self._execute_job(job)
+                self._execute_job(job)
         except Exception as e:
             job.add_log(f"❌ เกิดข้อผิดพลาดในการประมวลผลงาน: {e}")
             with job.lock:
@@ -666,9 +681,6 @@ class JobQueueManager:
             self._persist_job(job)
         finally:
             with self.lock:
-                if job.job_id in self.waiting_queue:
-                    self.waiting_queue.remove(job.job_id)
-                self._update_queue_positions()
                 if job.job_id in self.active_threads:
                     del self.active_threads[job.job_id]
 

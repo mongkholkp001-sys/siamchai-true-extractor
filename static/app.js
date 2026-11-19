@@ -550,8 +550,8 @@ function updateStatusBadge(el, status, queuePos) {
     el.textContent = 'กำลังเปิดระบบ... (STARTING)';
     el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30 animate-pulse';
   } else if (status === 'queued') {
-    el.textContent = `รอคิวประมวลผล (คิวที่ ${queuePos || 1})`;
-    el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30 animate-pulse';
+    el.textContent = 'กำลังจัดเตรียมระบบ...';
+    el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-sky-500/15 text-sky-400 border border-sky-500/30 animate-pulse';
   } else if (status === 'done') {
     el.textContent = 'เสร็จสิ้น (DONE)';
     el.className = 'px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
@@ -582,7 +582,7 @@ function updateUI(data) {
 
   if (isQueued) {
     btnStart.disabled = true;
-    btnStart.innerHTML = `<span class="inline-block animate-spin mr-1">⏳</span><span>รอคิวประมวลผล (คิวที่ ${data.queue_position || 1})...</span>`;
+    btnStart.innerHTML = `<span class="inline-block animate-spin mr-1">⚡</span><span>กำลังจัดเตรียมระบบและเริ่มค้นหา...</span>`;
     btnStop.disabled = false;
   } else if (isBusy) {
     btnStart.disabled = true;
@@ -1091,8 +1091,8 @@ async function loadHistoryList() {
       if (j.status === 'done') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">เสร็จสิ้น</span>';
       else if (j.status === 'running') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-sky-500/20 text-sky-400 border border-sky-500/30 animate-pulse">กำลังค้นหา</span>';
       else if (j.status === 'starting') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse">กำลังเปิดระบบ</span>';
-      else if (j.status === 'queued') statusBadge = `<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">ในคิว (${j.queue_position})</span>`;
-      else if (j.status === 'stopped') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] bg-amber-500/20 text-amber-400">หยุดแล้ว</span>';
+      else if (j.status === 'queued') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-sky-500/20 text-sky-400 border border-sky-500/30 animate-pulse">กำลังจัดเตรียมระบบ</span>';
+      else if (j.status === 'stopped') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-400">หยุดแล้ว</span>';
       else if (j.status === 'error') statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30">ข้อผิดพลาด</span>';
 
       let modeLabel = 'สยามชัย & ทรู';
@@ -1103,12 +1103,9 @@ async function loadHistoryList() {
       const isJobActive = (j.status === 'running' || j.status === 'starting' || j.status === 'queued');
       const canManage = (currentUserRole === 'admin' || authUser.toLowerCase() === 'admin' || authUser.toLowerCase() === (j.user || '').toLowerCase());
 
-      // If active job: Show specific Stop and Reset buttons right on this file row
+      // If active job: Show stop button
       if (isJobActive && canManage) {
-        dlBtns.push(`<button class="btn-row-stop px-2 py-1 rounded bg-rose-600/30 hover:bg-rose-600 text-rose-200 hover:text-white text-xs border border-rose-500/40 inline-flex items-center gap-1 font-medium transition-colors" data-jobid="${j.job_id}" data-user="${j.user}" title="สั่งหยุดงานนี้เฉพาะไฟล์นี้">🛑 หยุดงานนี้</button>`);
-        dlBtns.push(`<button class="btn-row-reset px-2 py-1 rounded bg-amber-600/30 hover:bg-amber-600 text-amber-200 hover:text-white text-xs border border-amber-500/40 inline-flex items-center gap-1 font-medium transition-colors" data-jobid="${j.job_id}" data-user="${j.user}" title="รีเซ็ตและปลดล็อคให้เริ่มงานใหม่ได้ทันที">🔄 รีเซ็ต</button>`);
-      } else if ((j.status === 'stopped' || j.status === 'error') && canManage) {
-        dlBtns.push(`<button class="btn-row-reset px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] border border-slate-700 inline-flex items-center gap-1 font-medium transition-colors" data-jobid="${j.job_id}" data-user="${j.user}" title="รีเซ็ตสถานะพร้อมเริ่มค้นหาใหม่">🔄 รีเซ็ต</button>`);
+        dlBtns.push(`<button class="btn-row-stop px-2.5 py-1 rounded bg-rose-600/30 hover:bg-rose-600 text-rose-200 hover:text-white text-xs border border-rose-500/40 inline-flex items-center gap-1 font-medium transition-colors" data-jobid="${j.job_id}" data-user="${j.user}" title="สั่งหยุดงานนี้เฉพาะไฟล์นี้">🛑 หยุดงานนี้</button>`);
       }
 
       if (j.has_combined_excel) {
