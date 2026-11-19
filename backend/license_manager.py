@@ -298,3 +298,185 @@ def save_and_activate_license(license_key_str: str) -> Dict[str, Any]:
             "current_machine": get_machine_id(),
             "contact_email": CONTACT_EMAIL
         }
+
+
+# ==========================================================================
+# 🌐 ONLINE ACTIVATION & 1-CLICK EMAIL APPROVAL ENGINE (Max 3 Machines per User)
+# ==========================================================================
+CENTRAL_SERVER_URL = "http://119.10.137.52:8000"
+
+def get_customers_db_path() -> str:
+    from backend.storage import DATA_DIR
+    return os.path.join(DATA_DIR, "online_customers.json")
+
+def load_online_customers() -> Dict[str, Any]:
+    path = get_customers_db_path()
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+    return {}
+
+def save_online_customers(data: Dict[str, Any]) -> bool:
+    path = get_customers_db_path()
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+def check_customer_quota(customer_name: str, machine_id: str) -> Dict[str, Any]:
+    """
+    Checks customer's machine quota (strictly max 3 machines).
+    """
+    customers = load_online_customers()
+    clean_key = customer_name.strip().lower()
+    clean_mch = machine_id.strip().upper()
+
+    rec = customers.get(clean_key)
+    if not rec:
+        return {
+            "customer": customer_name.strip(),
+            "is_registered": False,
+            "current_machines": [],
+            "machine_count": 0,
+            "max_machines": 3,
+            "slot_for_this_machine": 1,
+            "quota_exceeded": False
+        }
+
+    machines = [m.strip().upper() for m in rec.get("machines", [])]
+    max_machines = int(rec.get("max_machines", 3))
+
+    if clean_mch in machines:
+        slot = machines.index(clean_mch) + 1
+        return {
+            "customer": rec.get("customer_name", customer_name),
+            "is_registered": True,
+            "current_machines": machines,
+            "machine_count": len(machines),
+            "max_machines": max_machines,
+            "slot_for_this_machine": slot,
+            "quota_exceeded": False,
+            "expire_date": rec.get("expire_date", "")
+        }
+
+    quota_exceeded = len(machines) >= max_machines
+    return {
+        "customer": rec.get("customer_name", customer_name),
+        "is_registered": False,
+        "current_machines": machines,
+        "machine_count": len(machines),
+        "max_machines": max_machines,
+        "slot_for_this_machine": len(machines) + 1,
+        "quota_exceeded": quota_exceeded,
+        "expire_date": rec.get("expire_date", "")
+    }
+
+def create_approval_token(machine_id: str, days: int, customer_name: str) -> str:
+    clean_mch = machine_id.strip().upper()
+    clean_cust = customer_name.strip().lower()
+    raw = f"{clean_mch}:{days}:{clean_cust}"
+    return hmac.new(MASTER_SIGNING_SECRET.encode("utf-8"), raw.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+
+def verify_approval_token(machine_id: str, days: int, customer_name: str, token: str) -> bool:
+    expected = create_approval_token(machine_id, days, customer_name)
+    return hmac.compare_digest(token.lower(), expected.lower())
+
+def record_approval(customer_name: str, machine_id: str, days: int, phone: str = "", force_add: bool = False) -> Dict[str, Any]:
+    """
+    Approves a machine for a customer, binds up to 3 machines, and creates a signed license key.
+    """
+    from datetime import date, timedelta
+    customers = load_online_customers()
+    clean_key = customer_name.strip().lower()
+    clean_mch = machine_id.strip().upper()
+
+    rec = customers.get(clean_key, {
+        "customer_name": customer_name.strip(),
+        "phone": phone.strip(),
+        "max_machines": 3,
+        "machines": [],
+        "created_at": date.today().strftime("%Y-%m-%d")
+    })
+
+    machines = [m.strip().upper() for m in rec.get("machines", [])]
+    max_machines = int(rec.get("max_machines", 3))
+
+    if clean_mch not in machines:
+        if len(machines) >= max_machines and not force_add:
+            return {
+                "ok": False,
+                "error": f"ลูกค้ารายนี้ใช้โควต้าครบ {max_machines} เครื่องแล้ว ({', '.join(machines)}) ไม่สามารถลงทะเบียนเครื่องที่ {len(machines)+1} ได้"
+            }
+        machines.append(clean_mch)
+
+    exp_date = (date.today() + timedelta(days=int(days))).strftime("%Y-%m-%d")
+    rec["customer_name"] = customer_name.strip()
+    rec["machines"] = machines
+    rec["expire_date"] = exp_date
+    rec["last_approved"] = date.today().strftime("%Y-%m-%d")
+    rec["days_approved"] = int(days)
+    if phone:
+        rec["phone"] = phone.strip()
+
+    # Generate signed key for these machines
+    license_key = generate_license_key(
+        customer=rec.get("customer_name", customer_name),
+        expire_date=exp_date,
+        machines=machines,
+        max_machines=max_machines
+    )
+    rec["license_key"] = license_key
+
+    customers[clean_key] = rec
+    save_online_customers(customers)
+
+    return {
+        "ok": True,
+        "customer": rec["customer_name"],
+        "machine_id": clean_mch,
+        "machine_slot": machines.index(clean_mch) + 1,
+        "max_machines": max_machines,
+        "total_machines": len(machines),
+        "machines": machines,
+        "expire_date": exp_date,
+        "days": days,
+        "license_key": license_key
+    }
+
+def get_online_activation(machine_id: str) -> Dict[str, Any]:
+    """Checks if this machine has an approved license in the online database."""
+    clean_mch = machine_id.strip().upper()
+    customers = load_online_customers()
+    today = date.today()
+
+    for key, rec in customers.items():
+        machines = [m.strip().upper() for m in rec.get("machines", [])]
+        if clean_mch in machines:
+            exp_str = rec.get("expire_date", "")
+            try:
+                exp_d = datetime.strptime(exp_str, "%Y-%m-%d").date()
+                days_left = (exp_d - today).days
+                if days_left >= 0:
+                    return {
+                        "approved": True,
+                        "customer": rec.get("customer_name", key),
+                        "expire_date": exp_str,
+                        "days_left": days_left,
+                        "machine_id": clean_mch,
+                        "machine_slot": machines.index(clean_mch) + 1,
+                        "total_machines": len(machines),
+                        "max_machines": int(rec.get("max_machines", 3)),
+                        "license_key": rec.get("license_key", "")
+                    }
+            except Exception:
+                pass
+
+    return {"approved": False, "machine_id": clean_mch}
+

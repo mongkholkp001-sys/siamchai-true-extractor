@@ -28,7 +28,13 @@ from backend.license_manager import (
     get_current_license_status,
     save_and_activate_license,
     generate_license_key,
-    CONTACT_EMAIL
+    CONTACT_EMAIL,
+    CENTRAL_SERVER_URL,
+    check_customer_quota,
+    create_approval_token,
+    verify_approval_token,
+    record_approval,
+    get_online_activation
 )
 
 app = FastAPI(title="Siamchai & TrueCorp Unified Extractor")
@@ -280,19 +286,48 @@ async def api_license_status():
 
 @app.post("/api/license/request")
 async def api_license_request_email(req: LicenseEmailRequest):
-    """Sends activation request with customer info and Machine ID directly to mongkholkp001@gmail.com."""
+    """
+    Sends activation request with customer info, Machine ID, quota status,
+    and 1-Click Approval Links directly to mongkholkp001@gmail.com.
+    """
     from datetime import datetime
+    import urllib.parse
     clean_machine = (req.machine_id or "").strip() or get_machine_id()
+    cust_name = (req.customer_name or "").strip() or "ลูกค้าใหม่"
+    cust_encoded = urllib.parse.quote(cust_name)
+    phone = (req.phone or "").strip() or "-"
+
+    # Check 3-machine quota status
+    quota = check_customer_quota(cust_name, clean_machine)
+    quota_desc = f"เครื่องที่ {quota['slot_for_this_machine']} จากทั้งหมด {quota['max_machines']} เครื่อง (ปัจจุบันผูกแล้ว {quota['machine_count']} เครื่อง)"
+    if quota["quota_exceeded"]:
+        quota_desc = f"⚠️ แจ้งเตือน: ลูกค้ารายนี้ใช้โควต้าครบ {quota['max_machines']} เครื่องแล้ว! (เครื่องเดิม: {', '.join(quota['current_machines'])})"
+
+    # Generate 1-Click approval links for Admin
+    t30 = create_approval_token(clean_machine, 30, cust_name)
+    t60 = create_approval_token(clean_machine, 60, cust_name)
+    t90 = create_approval_token(clean_machine, 90, cust_name)
+    t365 = create_approval_token(clean_machine, 365, cust_name)
+
+    link_30 = f"{CENTRAL_SERVER_URL}/api/license/approve?mch={clean_machine}&days=30&name={cust_encoded}&phone={phone}&token={t30}"
+    link_60 = f"{CENTRAL_SERVER_URL}/api/license/approve?mch={clean_machine}&days=60&name={cust_encoded}&phone={phone}&token={t60}"
+    link_90 = f"{CENTRAL_SERVER_URL}/api/license/approve?mch={clean_machine}&days=90&name={cust_encoded}&phone={phone}&token={t90}"
+    link_365 = f"{CENTRAL_SERVER_URL}/api/license/approve?mch={clean_machine}&days=365&name={cust_encoded}&phone={phone}&token={t365}"
+
     payload = {
-        "_subject": f"[Customer Data Hub] ขอรหัสเปิดใช้งานเครื่องใหม่: {clean_machine}",
+        "_subject": f"[Customer Data Hub] ขอเปิดใช้งาน: {cust_name} ({quota_desc})",
         "_template": "table",
-        "ชื่อลูกค้า / บริษัท": req.customer_name or "ไม่ระบุชื่อ",
-        "เบอร์โทรติดต่อ": req.phone or "ไม่ระบุเบอร์",
-        "อีเมลติดต่อกลับ": req.email or "ไม่ระบุอีเมล",
-        "รหัสประจำเครื่อง (Machine ID)": clean_machine,
-        "วันเวลาที่ส่ง": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "ข้อความ": req.note or "ขอเปิดใช้งานโปรแกรม Customer Data Hub สำหรับเครื่องนี้"
+        "1. ชื่อลูกค้า / บริษัท": cust_name,
+        "2. เบอร์โทรติดต่อ": phone,
+        "3. รหัสประจำเครื่อง (Machine ID)": clean_machine,
+        "4. ลำดับโควต้าเครื่อง": quota_desc,
+        "5. วันเวลาที่ส่งคำขอ": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "👉 [คลิกอนุมัติ 30 วัน (1 เดือน)]": link_30,
+        "👉 [คลิกอนุมัติ 60 วัน (2 เดือน)]": link_60,
+        "👉 [คลิกอนุมัติ 90 วัน (3 เดือน)]": link_90,
+        "👉 [คลิกอนุมัติ 1 ปี (365 วัน)]": link_365
     }
+
     try:
         res = requests.post(
             f"https://formsubmit.co/ajax/{CONTACT_EMAIL}",
@@ -304,18 +339,160 @@ async def api_license_request_email(req: LicenseEmailRequest):
             },
             timeout=12
         )
-        data = res.json() if res.status_code == 200 else {}
-        if data.get("success") == "true" or res.status_code == 200:
-            return {
-                "status": "ok", 
-                "message": f"ระบบได้ส่งรหัสเครื่องและข้อมูลไปยังอีเมล {CONTACT_EMAIL} เรียบร้อยแล้ว!"
-            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ส่งอีเมลไม่สำเร็จ: {e}")
+
     return {
         "status": "ok", 
-        "message": f"ระบบได้ส่งรหัสเครื่องและข้อมูลไปยังอีเมล {CONTACT_EMAIL} เรียบร้อยแล้ว!"
+        "message": f"ระบบได้ส่งคำขอพร้อมรหัสเครื่องนี้ไปยังอีเมล {CONTACT_EMAIL} เรียบร้อยแล้ว! (ผู้ดูแลระบบสามารถกดอนุมัติในอีเมลได้ทันที)",
+        "machine_id": clean_machine,
+        "quota": quota
     }
+
+@app.get("/api/license/approve", response_class=HTMLResponse)
+async def api_license_approve(
+    mch: str,
+    days: int,
+    token: str,
+    name: Optional[str] = "ลูกค้า",
+    phone: Optional[str] = "",
+    force: Optional[int] = 0
+):
+    """
+    1-Click Email Approval Endpoint.
+    Admin clicks link in Gmail, which calls this endpoint on the Central Server (119.10.137.52:8000).
+    """
+    import urllib.parse
+    clean_name = urllib.parse.unquote(name or "ลูกค้า")
+    clean_mch = mch.strip().upper()
+
+    # 1. Verify Token
+    if not verify_approval_token(clean_mch, days, clean_name, token):
+        return HTMLResponse(
+            f"""
+            <!DOCTYPE html>
+            <html lang="th">
+            <head><meta charset="utf-8"><title>ข้อผิดพลาดการอนุมัติ</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+            <body style="font-family: sans-serif; background: #0f172a; color: #fff; padding: 2rem; display: flex; justify-content: center; align-items: center; min-height: 80vh;">
+                <div style="background: #1e293b; border: 1px solid #ef4444; border-radius: 1rem; padding: 2rem; max-width: 500px; text-align: center;">
+                    <h2 style="color: #ef4444; margin-top: 0;">❌ ลิงก์อนุมัติไม่ถูกต้องหรือหมดอายุ</h2>
+                    <p style="color: #94a3b8;">รหัสความปลอดภัย (Security Token) ไม่ตรงกับคำขอ กรุณาตรวจสอบอีเมลล่าสุดอีกครั้ง</p>
+                </div>
+            </body>
+            </html>
+            """,
+            status_code=403
+        )
+
+    # 2. Record Approval and enforce max 3 machines
+    res = record_approval(clean_name, clean_mch, days, phone=phone, force_add=(force == 1))
+    if not res.get("ok"):
+        # Quota exceeded prompt
+        force_url = f"/api/license/approve?mch={clean_mch}&days={days}&name={urllib.parse.quote(clean_name)}&phone={phone}&token={token}&force=1"
+        return HTMLResponse(
+            f"""
+            <!DOCTYPE html>
+            <html lang="th">
+            <head><meta charset="utf-8"><title>โควต้าเครื่องเต็ม</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+            <body style="font-family: sans-serif; background: #0f172a; color: #fff; padding: 2rem; display: flex; justify-content: center; align-items: center; min-height: 80vh;">
+                <div style="background: #1e293b; border: 1px solid #f59e0b; border-radius: 1rem; padding: 2rem; max-width: 540px;">
+                    <h2 style="color: #f59e0b; margin-top: 0;">⚠️ ลูกค้าใช้โควต้าครบ 3 เครื่องแล้ว!</h2>
+                    <p style="color: #cbd5e1;">ลูกค้า: <b>{clean_name}</b></p>
+                    <p style="color: #cbd5e1;">รหัสเครื่องใหม่นี้: <code>{clean_mch}</code></p>
+                    <p style="color: #fca5a5; font-size: 0.9rem;">{res.get('error')}</p>
+                    <hr style="border: 0; border-top: 1px solid #334155; margin: 1.5rem 0;">
+                    <p style="color: #94a3b8; font-size: 0.85rem;">หากคุณต้องการยืนยันอนุมัติเป็นกรณีพิเศษ (เพิ่มเครื่องนี้ให้ลูกค้า) ให้กดปุ่มด้านล่าง:</p>
+                    <a href="{force_url}" style="display: block; text-align: center; background: #f59e0b; color: #000; padding: 0.75rem 1rem; border-radius: 0.5rem; text-decoration: none; font-weight: bold; margin-top: 1rem;">
+                        ⚠️ ยืนยันอนุมัติพิเศษ (เพิ่มเครื่องนี้)
+                    </a>
+                </div>
+            </body>
+            </html>
+            """
+        )
+
+    # Success HTML Page
+    slot_num = res["machine_slot"]
+    total_mch = res["total_machines"]
+    max_mch = res["max_machines"]
+    exp_date = res["expire_date"]
+
+    return HTMLResponse(
+        f"""
+        <!DOCTYPE html>
+        <html lang="th">
+        <head>
+            <meta charset="utf-8">
+            <title>อนุมัติสิทธิ์สำเร็จ - Customer Data Hub</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+            <style>
+                body {{ font-family: 'Prompt', sans-serif; background: radial-gradient(circle at 10% 10%, #0f172a 0%, #090d16 100%); color: #f8fafc; padding: 1.5rem; display: flex; justify-content: center; align-items: center; min-height: 90vh; margin: 0; }}
+                .card {{ background: rgba(30, 41, 59, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 1.25rem; padding: 2.25rem; max-width: 520px; width: 100%; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }}
+                .badge {{ display: inline-block; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 9999px; padding: 0.25rem 0.75rem; font-size: 0.75rem; font-weight: 600; margin-bottom: 1rem; }}
+                .title {{ font-size: 1.5rem; font-weight: 700; color: #fff; margin: 0 0 0.5rem 0; display: flex; align-items: center; gap: 0.5rem; }}
+                .subtitle {{ color: #94a3b8; font-size: 0.875rem; margin: 0 0 1.5rem 0; }}
+                .row {{ display: flex; justify-content: space-between; padding: 0.65rem 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); font-size: 0.875rem; }}
+                .label {{ color: #94a3b8; }}
+                .val {{ font-weight: 600; color: #f1f5f9; }}
+                .code {{ font-family: 'JetBrains Mono', monospace; color: #38bdf8; font-size: 0.85rem; }}
+                .quota-box {{ background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 0.75rem; padding: 1rem; margin-top: 1.25rem; font-size: 0.85rem; text-align: center; color: #cbd5e1; }}
+                .footer-notice {{ margin-top: 1.5rem; text-align: center; color: #10b981; font-size: 0.875rem; font-weight: 600; }}
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <span class="badge">● ระบบอนุมัติสิทธิ์ออนไลน์อัตโนมัติ</span>
+                <h1 class="title">🎉 อนุมัติสิทธิ์สำเร็จ!</h1>
+                <p class="subtitle">ระบบได้เปิดสิทธิ์การใช้งานให้เครื่องลูกค้ารายนี้เรียบร้อยแล้ว</p>
+
+                <div class="row"><span class="label">ชื่อลูกค้า / บริษัท:</span><span class="val">{clean_name}</span></div>
+                <div class="row"><span class="label">ระยะเวลาที่อนุมัติ:</span><span class="val" style="color: #34d399;">{days} วัน</span></div>
+                <div class="row"><span class="label">ใช้งานได้ถึงวันที่:</span><span class="val" style="color: #38bdf8;">{exp_date}</span></div>
+                <div class="row"><span class="label">รหัสเครื่องที่อนุมัติ:</span><span class="val code">{clean_mch}</span></div>
+                <div class="row"><span class="label">ลำดับโควต้าเครื่อง:</span><span class="val" style="color: #fbbf24;">เครื่องที่ {slot_num} จากทั้งหมด {max_mch} เครื่อง (ผูกแล้ว {total_mch}/{max_mch})</span></div>
+
+                <div class="quota-box">
+                    💻 <b>สถานะโควต้าเครื่อง</b>: เครื่องนี้ได้รับอนุมัติในโควต้า 3 เครื่องเรียบร้อยแล้ว<br>
+                    เครื่องของลูกค้าจะปลดล็อกและเริ่มใช้งานได้โดยอัตโนมัติทันที โดยลูกค้าไม่ต้องพิมพ์หรือวางรหัสใดๆ ครับ
+                </div>
+
+                <div class="footer-notice">
+                    ✅ ดำเนินการเสร็จสมบูรณ์ คุณสามารถปิดหน้านี้ได้เลยครับ
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+    )
+
+@app.get("/api/license/check-online")
+async def api_license_check_online(mch: str):
+    """
+    Called by client machines (localhost:8088) to check if admin approved their machine.
+    Queries local DB first; if not found, queries the Central VPS Server (119.10.137.52:8000).
+    If approved, automatically saves and activates license locally!
+    """
+    clean_mch = mch.strip().upper()
+    
+    # 1. Check local DB first
+    local_rec = get_online_activation(clean_mch)
+    if local_rec.get("approved"):
+        return local_rec
+
+    # 2. If running locally (not the VPS itself), query Central Server
+    try:
+        r = requests.get(f"{CENTRAL_SERVER_URL}/api/license/check-online?mch={clean_mch}", timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("approved") and data.get("license_key"):
+                # Automatically save and activate license on client's computer!
+                save_and_activate_license(data["license_key"])
+                return data
+    except Exception:
+        pass
+
+    return {"approved": False, "machine_id": clean_mch}
 
 @app.post("/api/license/activate")
 async def api_license_activate(req: LicenseActivateRequest):

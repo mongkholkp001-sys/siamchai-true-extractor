@@ -1358,6 +1358,9 @@ async function checkLicenseStatus(autoOpenModalOnInvalid = false) {
       if (autoOpenModalOnInvalid && modalLicense) {
         modalLicense.classList.remove('hidden');
       }
+
+      // Background listener for online approval from Admin email
+      startPollingForApproval();
     }
   } catch (err) {
     console.error('Failed to check license status:', err);
@@ -1419,7 +1422,35 @@ if (btnCopyLineMsg) {
   });
 }
 
-// Send Direct Email Request (Direct to mongkholkp001@gmail.com via backend)
+// ------------------ Polling for 1-Click Email Approval ------------------
+let approvalPollInterval = null;
+function startPollingForApproval() {
+  if (approvalPollInterval) clearInterval(approvalPollInterval);
+  approvalPollInterval = setInterval(async () => {
+    if (!cachedCurrentMachineId) return;
+    try {
+      const res = await fetch(`/api/license/check-online?mch=${encodeURIComponent(cachedCurrentMachineId)}`);
+      const data = await res.json();
+      if (data.approved) {
+        clearInterval(approvalPollInterval);
+        approvalPollInterval = null;
+        if (licActionAlert) {
+          licActionAlert.className = 'p-3 rounded-xl text-xs bg-emerald-500/20 border border-emerald-500/40 text-emerald-300';
+          licActionAlert.innerHTML = `🎉 <b>ผู้ดูแลระบบกดอนุมัติเรียบร้อยแล้ว!</b><br>สิทธิ์การใช้งานของคุณพร้อมใช้งานแล้ว (หมดอายุ: ${data.expire_date} - เหลือ ${data.days_left} วัน)<br>เครื่องที่ ${data.machine_slot || 1}/${data.max_machines || 3} เครื่อง<br>ระบบกำลังเข้าสู่โปรแกรมอัตโนมัติ...`;
+          licActionAlert.classList.remove('hidden');
+        }
+        await checkLicenseStatus(false);
+        setTimeout(() => {
+          if (modalLicense) modalLicense.classList.add('hidden');
+        }, 1500);
+      }
+    } catch (e) {
+      console.warn('Poll approval err:', e);
+    }
+  }, 4000);
+}
+
+// Send Direct Email Request (Direct to mongkholkp001@gmail.com with 1-Click Approval Links)
 const btnSendEmailRequest = document.getElementById('btn-send-email-request');
 if (btnSendEmailRequest) {
   btnSendEmailRequest.addEventListener('click', async () => {
@@ -1450,10 +1481,11 @@ if (btnSendEmailRequest) {
       if (res.ok) {
         if (licActionAlert) {
           licActionAlert.className = 'p-3 rounded-xl text-xs bg-emerald-500/20 border border-emerald-500/40 text-emerald-300';
-          licActionAlert.innerHTML = `✅ <b>ส่งข้อมูลสำเร็จเรียบร้อย!</b><br>ระบบได้ส่งคำขอพร้อมรหัสเครื่องนี้ไปยังอีเมล <b>mongkholkp001@gmail.com</b> เรียบร้อยแล้ว กรุณารอรับรหัสเปิดใช้งานครับ`;
+          licActionAlert.innerHTML = `✅ <b>ส่งข้อมูลคำขอสำเร็จเรียบร้อย!</b><br>ระบบได้ส่งคำขอพร้อมปุ่มอนุมัติไปยังอีเมล <b>mongkholkp001@gmail.com</b> เรียบร้อยแล้ว<br><div class="mt-2 text-amber-300 flex items-center gap-1.5"><span class="animate-spin text-sm">⏳</span> <span>กำลังรอผู้ดูแลระบบกดอนุมัติในอีเมล... (เมื่ออนุมัติแล้ว ระบบนี้จะปลดล็อคและเริ่มใช้งานให้อัตโนมัติทันที)</span></div>`;
           licActionAlert.classList.remove('hidden');
         }
-        btnSendEmailRequest.innerHTML = '✅ <span>ส่งคำขอสำเร็จแล้ว</span>';
+        btnSendEmailRequest.innerHTML = '⏳ <span>รอผู้ดูแลระบบกดอนุมัติในอีเมล...</span>';
+        startPollingForApproval();
       } else {
         alert('ส่งคำขอไม่สำเร็จ: ' + (data.detail || 'เกิดข้อผิดพลาด'));
         btnSendEmailRequest.innerHTML = '✉️ <span>ส่งคำขอเปิดใช้งานเข้าอีเมล Admin ทันที</span>';
