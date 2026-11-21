@@ -330,25 +330,54 @@ def save_online_customers(data: Dict[str, Any]) -> bool:
     except Exception:
         return False
 
-def check_customer_quota(customer_name: str, machine_id: str) -> Dict[str, Any]:
+def hash_user_password(password: str) -> str:
+    """Generates salted SHA256 hash for customer user passwords."""
+    salt = MASTER_SIGNING_SECRET[:12]
+    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+
+def verify_user_password(password: str, hashed: str) -> bool:
+    """Verifies customer user password."""
+    if not password or not hashed:
+        return False
+    return hmac.compare_digest(hash_user_password(password), hashed)
+
+def check_user_quota(username: str, password: str, machine_id: str) -> Dict[str, Any]:
     """
-    Checks customer's machine quota (strictly max 3 machines).
+    Checks user's credentials and machine quota (strictly max 3 machines).
+    - If user does not exist: is_new = True, can register, slot = 1
+    - If user exists: checks password. If correct, checks if machine is new or existing.
     """
     customers = load_online_customers()
-    clean_key = customer_name.strip().lower()
-    clean_mch = machine_id.strip().upper()
+    clean_u = (username or "").strip().lower()
+    clean_p = (password or "").strip()
+    clean_mch = (machine_id or "").strip().upper()
 
-    rec = customers.get(clean_key)
+    if not clean_u:
+        return {"ok": False, "error": "กรุณาระบุชื่อผู้ใช้ (Username)"}
+
+    rec = customers.get(clean_u)
     if not rec:
+        # Brand new user registration!
         return {
-            "customer": customer_name.strip(),
-            "is_registered": False,
-            "current_machines": [],
+            "ok": True,
+            "is_new": True,
+            "username": clean_u,
+            "customer_name": clean_u,
             "machine_count": 0,
             "max_machines": 3,
             "slot_for_this_machine": 1,
-            "quota_exceeded": False
+            "quota_exceeded": False,
+            "current_machines": []
         }
+
+    # User already exists! Validate password
+    stored_hash = rec.get("password_hash", "")
+    if stored_hash and clean_p:
+        if not verify_user_password(clean_p, stored_hash):
+            return {
+                "ok": False,
+                "error": f"ชื่อผู้ใช้ '{clean_u}' นี้ถูกลงทะเบียนไว้แล้ว และรหัสผ่านไม่ถูกต้อง (หากเป็นบัญชีของคุณ กรุณากรอกรหัสผ่านเดิมให้ถูกต้อง หรือเปลี่ยนไปใช้ Username อื่น)"
+            }
 
     machines = [m.strip().upper() for m in rec.get("machines", [])]
     max_machines = int(rec.get("max_machines", 3))
@@ -356,27 +385,37 @@ def check_customer_quota(customer_name: str, machine_id: str) -> Dict[str, Any]:
     if clean_mch in machines:
         slot = machines.index(clean_mch) + 1
         return {
-            "customer": rec.get("customer_name", customer_name),
-            "is_registered": True,
-            "current_machines": machines,
+            "ok": True,
+            "is_new": False,
+            "username": clean_u,
+            "customer_name": rec.get("customer_name", clean_u),
+            "phone": rec.get("phone", ""),
             "machine_count": len(machines),
             "max_machines": max_machines,
             "slot_for_this_machine": slot,
             "quota_exceeded": False,
+            "current_machines": machines,
             "expire_date": rec.get("expire_date", "")
         }
 
     quota_exceeded = len(machines) >= max_machines
     return {
-        "customer": rec.get("customer_name", customer_name),
-        "is_registered": False,
-        "current_machines": machines,
+        "ok": True,
+        "is_new": False,
+        "username": clean_u,
+        "customer_name": rec.get("customer_name", clean_u),
+        "phone": rec.get("phone", ""),
         "machine_count": len(machines),
         "max_machines": max_machines,
         "slot_for_this_machine": len(machines) + 1,
         "quota_exceeded": quota_exceeded,
+        "current_machines": machines,
         "expire_date": rec.get("expire_date", "")
     }
+
+def check_customer_quota(customer_name: str, machine_id: str) -> Dict[str, Any]:
+    """Backwards compatible wrapper."""
+    return check_user_quota(username=customer_name, password="", machine_id=machine_id)
 
 def create_approval_token(machine_id: str, days: int, customer_name: str) -> str:
     clean_mch = machine_id.strip().upper()
@@ -388,22 +427,37 @@ def verify_approval_token(machine_id: str, days: int, customer_name: str, token:
     expected = create_approval_token(machine_id, days, customer_name)
     return hmac.compare_digest(token.lower(), expected.lower())
 
-def record_approval(customer_name: str, machine_id: str, days: int, phone: str = "", force_add: bool = False) -> Dict[str, Any]:
+def record_approval(
+    customer_name: str,
+    machine_id: str,
+    days: int,
+    phone: str = "",
+    password: str = "",
+    username: str = "",
+    force_add: bool = False
+) -> Dict[str, Any]:
     """
-    Approves a machine for a customer, binds up to 3 machines, and creates a signed license key.
+    Approves a machine for a customer/user, binds up to 3 machines, and creates a signed license key.
+    Automatically assigns role 'member' so clients never run as admin.
     """
     from datetime import date, timedelta
     customers = load_online_customers()
-    clean_key = customer_name.strip().lower()
+    clean_u = (username or customer_name).strip().lower()
+    clean_name = (customer_name or username).strip()
     clean_mch = machine_id.strip().upper()
 
-    rec = customers.get(clean_key, {
-        "customer_name": customer_name.strip(),
+    rec = customers.get(clean_u, {
+        "username": clean_u,
+        "customer_name": clean_name,
         "phone": phone.strip(),
+        "role": "member",
         "max_machines": 3,
         "machines": [],
         "created_at": date.today().strftime("%Y-%m-%d")
     })
+
+    if password:
+        rec["password_hash"] = hash_user_password(password)
 
     machines = [m.strip().upper() for m in rec.get("machines", [])]
     max_machines = int(rec.get("max_machines", 3))
@@ -412,14 +466,16 @@ def record_approval(customer_name: str, machine_id: str, days: int, phone: str =
         if len(machines) >= max_machines and not force_add:
             return {
                 "ok": False,
-                "error": f"ลูกค้ารายนี้ใช้โควต้าครบ {max_machines} เครื่องแล้ว ({', '.join(machines)}) ไม่สามารถลงทะเบียนเครื่องที่ {len(machines)+1} ได้"
+                "error": f"ผู้ใช้ '{clean_u}' ใช้โควต้าครบ {max_machines} เครื่องแล้ว ({', '.join(machines)}) ไม่สามารถลงทะเบียนเครื่องที่ {len(machines)+1} ได้"
             }
         machines.append(clean_mch)
 
     exp_date = (date.today() + timedelta(days=int(days))).strftime("%Y-%m-%d")
-    rec["customer_name"] = customer_name.strip()
+    rec["username"] = clean_u
+    rec["customer_name"] = clean_name
     rec["machines"] = machines
     rec["expire_date"] = exp_date
+    rec["role"] = "member"
     rec["last_approved"] = date.today().strftime("%Y-%m-%d")
     rec["days_approved"] = int(days)
     if phone:
@@ -427,19 +483,46 @@ def record_approval(customer_name: str, machine_id: str, days: int, phone: str =
 
     # Generate signed key for these machines
     license_key = generate_license_key(
-        customer=rec.get("customer_name", customer_name),
+        customer=clean_u,
         expire_date=exp_date,
         machines=machines,
         max_machines=max_machines
     )
     rec["license_key"] = license_key
 
-    customers[clean_key] = rec
+    customers[clean_u] = rec
     save_online_customers(customers)
+
+    # Sync to local users.json as member
+    try:
+        from backend.storage import load_users, save_users
+        users = load_users()
+        existing_u = next((u for u in users if u.get("username", "").strip().lower() == clean_u), None)
+        if existing_u:
+            existing_u["expire_date"] = exp_date
+            existing_u["max_devices"] = max_machines
+            existing_u["role"] = "member"
+            if password:
+                existing_u["password"] = password
+            save_users(users)
+        else:
+            users.append({
+                "username": clean_u,
+                "password": password or "1234",
+                "role": "member",
+                "name": clean_name,
+                "expire_date": exp_date,
+                "max_devices": max_machines,
+                "devices": [{"id": clean_mch, "first_seen": int(time.time()), "last_seen": int(time.time())}]
+            })
+            save_users(users)
+    except Exception:
+        pass
 
     return {
         "ok": True,
-        "customer": rec["customer_name"],
+        "username": clean_u,
+        "customer": clean_name,
         "machine_id": clean_mch,
         "machine_slot": machines.index(clean_mch) + 1,
         "max_machines": max_machines,
@@ -447,6 +530,7 @@ def record_approval(customer_name: str, machine_id: str, days: int, phone: str =
         "machines": machines,
         "expire_date": exp_date,
         "days": days,
+        "role": "member",
         "license_key": license_key
     }
 
@@ -466,7 +550,9 @@ def get_online_activation(machine_id: str) -> Dict[str, Any]:
                 if days_left >= 0:
                     return {
                         "approved": True,
+                        "username": rec.get("username", key),
                         "customer": rec.get("customer_name", key),
+                        "role": rec.get("role", "member"),
                         "expire_date": exp_str,
                         "days_left": days_left,
                         "machine_id": clean_mch,

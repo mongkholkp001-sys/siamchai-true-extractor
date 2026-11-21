@@ -654,17 +654,38 @@
         </div>
 
         <!-- Automatic Email Request Form -->
-        <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/80 space-y-2">
-          <div class="text-[11px] font-semibold text-sky-300 flex items-center gap-1">
-            ✉️ ส่งข้อมูลขอเปิดใช้งานเข้าอีเมลผู้ดูแลระบบ (mongkholkp001@gmail.com):
+        <div class="bg-slate-900/60 p-3 rounded-lg border border-slate-800/80 space-y-2.5">
+          <div class="text-[11px] font-semibold text-sky-300 flex items-center justify-between">
+            <span class="flex items-center gap-1">✉️ ส่งข้อมูลขอเปิดใช้งานเข้าอีเมล Admin (mongkholkp001@gmail.com):</span>
+            <span class="text-[10px] text-indigo-400 font-medium">โควต้า 3 เครื่อง/User</span>
           </div>
+          
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <input type="text" id="req-lic-name" placeholder="ชื่อลูกค้า / บริษัท (เช่น MaxGroup)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-sky-500">
-            <input type="text" id="req-lic-phone" placeholder="เบอร์โทรติดต่อกลับ (เช่น 0812345678)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-sky-500">
+            <div>
+              <label class="block text-[10px] text-slate-400 mb-0.5">👤 ชื่อผู้ใช้ (Username) <span class="text-rose-400">*</span></label>
+              <input type="text" id="req-lic-username" placeholder="เช่น somchai01 (อังกฤษ/ตัวเลข)" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-sky-500 font-mono">
+            </div>
+            <div>
+              <label class="block text-[10px] text-slate-400 mb-0.5">🔒 รหัสผ่าน (Password) <span class="text-rose-400">*</span></label>
+              <input type="password" id="req-lic-password" placeholder="ตั้งรหัสผ่านสำหรับเข้าใช้งาน" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-sky-500">
+            </div>
+            <div>
+              <label class="block text-[10px] text-slate-400 mb-0.5">🏢 ชื่อลูกค้า / บริษัท / สาขา</label>
+              <input type="text" id="req-lic-name" placeholder="ชื่อบุคคล หรือบริษัท/สาขา" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-sky-500">
+            </div>
+            <div>
+              <label class="block text-[10px] text-slate-400 mb-0.5">📞 เบอร์โทรติดต่อกลับ</label>
+              <input type="text" id="req-lic-phone" placeholder="เช่น 0812345678" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-sky-500">
+            </div>
           </div>
+
+          <div class="text-[10px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 leading-relaxed">
+            💡 <b>คำแนะนำ:</b> หากต้องการเปิดใช้งานเครื่องที่ 2 หรือ 3 ให้กรอก <u>Username และ Password เดิม</u> ที่ลงทะเบียนไว้ ระบบจะนับเป็นเครื่องในโควต้า 3 เครื่องของคุณโดยอัตโนมัติ
+          </div>
+
           <div class="flex items-center gap-2 pt-0.5">
             <button id="btn-send-email-request" class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-md shadow-sky-600/20 transition-all">
-              ✉️ <span>ส่งคำขอเปิดใช้งานเข้าอีเมล Admin ทันที</span>
+              ✉️ <span>ส่งคำขอเปิดใช้งานและสร้างบัญชีทันที</span>
             </button>
             <button id="btn-copy-line-msg" class="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 text-xs font-medium transition-colors whitespace-nowrap">
               💬 <span>คัดลอกส่ง LINE</span>

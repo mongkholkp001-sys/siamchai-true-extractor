@@ -31,6 +31,7 @@ from backend.license_manager import (
     CONTACT_EMAIL,
     CENTRAL_SERVER_URL,
     check_customer_quota,
+    check_user_quota,
     create_approval_token,
     verify_approval_token,
     record_approval,
@@ -126,6 +127,8 @@ class LicenseGenerateRequest(BaseModel):
     max_machines: Optional[int] = 3
 
 class LicenseEmailRequest(BaseModel):
+    username: str
+    password: str
     customer_name: Optional[str] = ""
     phone: Optional[str] = ""
     email: Optional[str] = ""
@@ -157,6 +160,14 @@ async def serve_index(request: Request):
             is_authenticated = True
         except Exception:
             pass
+
+    # If license is not active on this machine or user wants to activate, allow index.html to show activation modal directly
+    lic_status = get_current_license_status()
+    if not lic_status.get("valid") or request.query_params.get("activate") == "1":
+        index_path = find_static_file("index.html")
+        if index_path and os.path.exists(index_path):
+            with open(index_path, "r", encoding="utf-8") as f:
+                return HTMLResponse(content=f.read())
 
     if not is_authenticated:
         return HTMLResponse("<script>window.location.href='/login';</script>")
@@ -297,44 +308,111 @@ async def api_license_status():
     """Returns license status, current machine ID, and contact details."""
     return get_current_license_status()
 
-@app.post("/api/license/request")
-async def api_license_request_email(req: LicenseEmailRequest):
+@app.get("/api/license/check-user-quota")
+async def api_license_check_user_quota(u: str, p: str, mch: str, request: Request):
     """
-    Sends activation request with customer info, Machine ID, quota status,
+    Checks user credentials and quota against central or local DB.
+    """
+    clean_u = (u or "").strip().lower()
+    clean_p = (p or "").strip()
+    clean_mch = (mch or "").strip().upper()
+
+    host_hdr = (request.headers.get("host") or "").lower()
+    is_central = (
+        "119.10.137.52" in host_hdr
+        or "119.10.137.52" in get_lan_ip()
+        or os.path.exists("/root/siamchai-true-extractor")
+        or os.environ.get("IS_CENTRAL_SERVER") == "1"
+        or CENTRAL_SERVER_URL.lower().rstrip('/') in str(request.url).lower()
+    )
+    if not is_central:
+        try:
+            params = {"u": clean_u, "p": clean_p, "mch": clean_mch}
+            r = requests.get(f"{CENTRAL_SERVER_URL}/api/license/check-user-quota", params=params, timeout=5)
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            pass
+
+    return check_user_quota(clean_u, clean_p, clean_mch)
+
+@app.post("/api/license/request")
+async def api_license_request_email(req: LicenseEmailRequest, request: Request):
+    """
+    Sends activation request with customer info, User credentials, Machine ID, quota status,
     and 1-Click Approval Links directly to mongkholkp001@gmail.com.
     """
     from datetime import datetime
     import urllib.parse
+    import base64
+    clean_u = (req.username or "").strip().lower()
+    clean_p = (req.password or "").strip()
     clean_machine = (req.machine_id or "").strip() or get_machine_id()
-    cust_name = (req.customer_name or "").strip() or "ลูกค้าใหม่"
+    cust_name = (req.customer_name or "").strip() or clean_u
     cust_encoded = urllib.parse.quote(cust_name)
     phone = (req.phone or "").strip() or "-"
 
-    # Check 3-machine quota status
-    quota = check_customer_quota(cust_name, clean_machine)
+    if not clean_u or len(clean_u) < 3:
+        raise HTTPException(status_code=400, detail="กรุณาระบุชื่อผู้ใช้ (Username) อย่างน้อย 3 ตัวอักษร")
+    if not clean_p or len(clean_p) < 4:
+        raise HTTPException(status_code=400, detail="กรุณากำหนดรหัสผ่าน (Password) อย่างน้อย 4 ตัวอักษร")
+
+    # Check credentials & 3-machine quota status (query central VPS if local)
+    quota = None
+    host_hdr = (request.headers.get("host") or "").lower()
+    is_central = (
+        "119.10.137.52" in host_hdr
+        or "119.10.137.52" in get_lan_ip()
+        or os.path.exists("/root/siamchai-true-extractor")
+        or os.environ.get("IS_CENTRAL_SERVER") == "1"
+        or CENTRAL_SERVER_URL.lower().rstrip('/') in str(request.url).lower()
+    )
+    if not is_central:
+        try:
+            params = {"u": clean_u, "p": clean_p, "mch": clean_machine}
+            r = requests.get(f"{CENTRAL_SERVER_URL}/api/license/check-user-quota", params=params, timeout=5)
+            if r.status_code == 200:
+                quota = r.json()
+        except Exception:
+            pass
+
+    if not quota:
+        quota = check_user_quota(clean_u, clean_p, clean_machine)
+
+    if not quota.get("ok"):
+        raise HTTPException(status_code=400, detail=quota.get("error", "การตรวจสอบชื่อผู้ใช้และรหัสผ่านไม่ผ่าน"))
+
+    is_new = quota.get("is_new", True)
+    user_status_label = "บัญชีผู้ใช้ใหม่ (เพิ่งลงทะเบียน)" if is_new else "บัญชีเดิมที่มีอยู่แล้ว"
     quota_desc = f"เครื่องที่ {quota['slot_for_this_machine']} จากทั้งหมด {quota['max_machines']} เครื่อง (ปัจจุบันผูกแล้ว {quota['machine_count']} เครื่อง)"
-    if quota["quota_exceeded"]:
-        quota_desc = f"⚠️ แจ้งเตือน: ลูกค้ารายนี้ใช้โควต้าครบ {quota['max_machines']} เครื่องแล้ว! (เครื่องเดิม: {', '.join(quota['current_machines'])})"
+    if quota.get("quota_exceeded"):
+        quota_desc = f"⚠️ แจ้งเตือน: ผู้ใช้ '{clean_u}' ใช้โควต้าครบ {quota['max_machines']} เครื่องแล้ว! (เครื่องเดิม: {', '.join(quota.get('current_machines', []))})"
+
+    # Encode password for approval link
+    pwd_b64 = base64.urlsafe_b64encode(clean_p.encode("utf-8")).decode("ascii")
 
     # Generate 1-Click approval links for Admin
-    t30 = create_approval_token(clean_machine, 30, cust_name)
-    t60 = create_approval_token(clean_machine, 60, cust_name)
-    t90 = create_approval_token(clean_machine, 90, cust_name)
-    t365 = create_approval_token(clean_machine, 365, cust_name)
+    t30 = create_approval_token(clean_machine, 30, clean_u)
+    t60 = create_approval_token(clean_machine, 60, clean_u)
+    t90 = create_approval_token(clean_machine, 90, clean_u)
+    t365 = create_approval_token(clean_machine, 365, clean_u)
 
-    link_30 = f"{CENTRAL_SERVER_URL}/api/license/approve?mch={clean_machine}&days=30&name={cust_encoded}&phone={phone}&token={t30}"
-    link_60 = f"{CENTRAL_SERVER_URL}/api/license/approve?mch={clean_machine}&days=60&name={cust_encoded}&phone={phone}&token={t60}"
-    link_90 = f"{CENTRAL_SERVER_URL}/api/license/approve?mch={clean_machine}&days=90&name={cust_encoded}&phone={phone}&token={t90}"
-    link_365 = f"{CENTRAL_SERVER_URL}/api/license/approve?mch={clean_machine}&days=365&name={cust_encoded}&phone={phone}&token={t365}"
+    base_link = f"{CENTRAL_SERVER_URL}/api/license/approve?mch={clean_machine}&user={clean_u}&name={cust_encoded}&phone={phone}&pwd={pwd_b64}"
+    link_30 = f"{base_link}&days=30&token={t30}"
+    link_60 = f"{base_link}&days=60&token={t60}"
+    link_90 = f"{base_link}&days=90&token={t90}"
+    link_365 = f"{base_link}&days=365&token={t365}"
 
     payload = {
-        "_subject": f"[Customer Data Hub] ขอเปิดใช้งาน: {cust_name} ({quota_desc})",
+        "_subject": f"[Customer Data Hub] ขอเปิดใช้งาน: User {clean_u} ({quota_desc})",
         "_template": "table",
-        "1. ชื่อลูกค้า / บริษัท": cust_name,
-        "2. เบอร์โทรติดต่อ": phone,
-        "3. รหัสประจำเครื่อง (Machine ID)": clean_machine,
-        "4. ลำดับโควต้าเครื่อง": quota_desc,
-        "5. วันเวลาที่ส่งคำขอ": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "1. ชื่อผู้ใช้ (Username)": clean_u,
+        "2. ประเภทบัญชี": user_status_label,
+        "3. ชื่อลูกค้า / บริษัท": cust_name,
+        "4. เบอร์โทรติดต่อ": phone,
+        "5. รหัสประจำเครื่อง (Machine ID)": clean_machine,
+        "6. ลำดับโควต้าเครื่อง": quota_desc,
+        "7. วันเวลาที่ส่งคำขอ": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "👉 [คลิกอนุมัติ 30 วัน (1 เดือน)]": link_30,
         "👉 [คลิกอนุมัติ 60 วัน (2 เดือน)]": link_60,
         "👉 [คลิกอนุมัติ 90 วัน (3 เดือน)]": link_90,
@@ -358,6 +436,7 @@ async def api_license_request_email(req: LicenseEmailRequest):
     return {
         "status": "ok", 
         "message": f"ระบบได้ส่งคำขอพร้อมรหัสเครื่องนี้ไปยังอีเมล {CONTACT_EMAIL} เรียบร้อยแล้ว! (ผู้ดูแลระบบสามารถกดอนุมัติในอีเมลได้ทันที)",
+        "username": clean_u,
         "machine_id": clean_machine,
         "quota": quota
     }
@@ -367,8 +446,10 @@ async def api_license_approve(
     mch: str,
     days: int,
     token: str,
-    name: Optional[str] = "ลูกค้า",
+    user: Optional[str] = "",
+    name: Optional[str] = "",
     phone: Optional[str] = "",
+    pwd: Optional[str] = "",
     force: Optional[int] = 0
 ):
     """
@@ -376,11 +457,20 @@ async def api_license_approve(
     Admin clicks link in Gmail, which calls this endpoint on the Central Server (119.10.137.52:8000).
     """
     import urllib.parse
-    clean_name = urllib.parse.unquote(name or "ลูกค้า")
+    import base64
+    clean_u = (user or name or "ลูกค้า").strip().lower()
+    clean_name = urllib.parse.unquote(name or user or "ลูกค้า")
     clean_mch = mch.strip().upper()
+    raw_pwd = ""
+    if pwd:
+        try:
+            raw_pwd = base64.urlsafe_b64decode(pwd.encode("ascii")).decode("utf-8")
+        except Exception:
+            raw_pwd = pwd
 
-    # 1. Verify Token
-    if not verify_approval_token(clean_mch, days, clean_name, token):
+    # 1. Verify Token (supports both clean_u and clean_name)
+    is_valid_tok = verify_approval_token(clean_mch, days, clean_u, token) or verify_approval_token(clean_mch, days, clean_name, token)
+    if not is_valid_tok:
         return HTMLResponse(
             f"""
             <!DOCTYPE html>
@@ -397,11 +487,19 @@ async def api_license_approve(
             status_code=403
         )
 
-    # 2. Record Approval and enforce max 3 machines
-    res = record_approval(clean_name, clean_mch, days, phone=phone, force_add=(force == 1))
+    # 2. Record Approval and enforce max 3 machines (role is set to 'member')
+    res = record_approval(
+        customer_name=clean_name,
+        machine_id=clean_mch,
+        days=days,
+        phone=phone,
+        password=raw_pwd,
+        username=clean_u,
+        force_add=(force == 1)
+    )
     if not res.get("ok"):
         # Quota exceeded prompt
-        force_url = f"/api/license/approve?mch={clean_mch}&days={days}&name={urllib.parse.quote(clean_name)}&phone={phone}&token={token}&force=1"
+        force_url = f"/api/license/approve?mch={clean_mch}&days={days}&user={clean_u}&name={urllib.parse.quote(clean_name)}&phone={phone}&pwd={pwd}&token={token}&force=1"
         return HTMLResponse(
             f"""
             <!DOCTYPE html>
@@ -409,12 +507,12 @@ async def api_license_approve(
             <head><meta charset="utf-8"><title>โควต้าเครื่องเต็ม</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
             <body style="font-family: sans-serif; background: #0f172a; color: #fff; padding: 2rem; display: flex; justify-content: center; align-items: center; min-height: 80vh;">
                 <div style="background: #1e293b; border: 1px solid #f59e0b; border-radius: 1rem; padding: 2rem; max-width: 540px;">
-                    <h2 style="color: #f59e0b; margin-top: 0;">⚠️ ลูกค้าใช้โควต้าครบ 3 เครื่องแล้ว!</h2>
-                    <p style="color: #cbd5e1;">ลูกค้า: <b>{clean_name}</b></p>
+                    <h2 style="color: #f59e0b; margin-top: 0;">⚠️ ผู้ใช้ '{clean_u}' ใช้โควต้าครบ 3 เครื่องแล้ว!</h2>
+                    <p style="color: #cbd5e1;">ชื่อผู้ใช้: <b>{clean_u}</b> ({clean_name})</p>
                     <p style="color: #cbd5e1;">รหัสเครื่องใหม่นี้: <code>{clean_mch}</code></p>
                     <p style="color: #fca5a5; font-size: 0.9rem;">{res.get('error')}</p>
                     <hr style="border: 0; border-top: 1px solid #334155; margin: 1.5rem 0;">
-                    <p style="color: #94a3b8; font-size: 0.85rem;">หากคุณต้องการยืนยันอนุมัติเป็นกรณีพิเศษ (เพิ่มเครื่องนี้ให้ลูกค้า) ให้กดปุ่มด้านล่าง:</p>
+                    <p style="color: #94a3b8; font-size: 0.85rem;">หากคุณต้องการยืนยันอนุมัติเป็นกรณีพิเศษ (เพิ่มเครื่องนี้ให้ผู้ใช้รายนี้) ให้กดปุ่มด้านล่าง:</p>
                     <a href="{force_url}" style="display: block; text-align: center; background: #f59e0b; color: #000; padding: 0.75rem 1rem; border-radius: 0.5rem; text-decoration: none; font-weight: bold; margin-top: 1rem;">
                         ⚠️ ยืนยันอนุมัติพิเศษ (เพิ่มเครื่องนี้)
                     </a>
@@ -455,19 +553,21 @@ async def api_license_approve(
         </head>
         <body>
             <div class="card">
-                <span class="badge">● ระบบอนุมัติสิทธิ์ออนไลน์อัตโนมัติ</span>
+                <span class="badge">● ระบบอนุมัติสิทธิ์และสร้างบัญชีอัตโนมัติ</span>
                 <h1 class="title">🎉 อนุมัติสิทธิ์สำเร็จ!</h1>
-                <p class="subtitle">ระบบได้เปิดสิทธิ์การใช้งานให้เครื่องลูกค้ารายนี้เรียบร้อยแล้ว</p>
+                <p class="subtitle">ระบบได้เปิดสิทธิ์และสร้างบัญชีผู้ใช้ (Member) เรียบร้อยแล้ว</p>
 
+                <div class="row"><span class="label">ชื่อผู้ใช้ (Username):</span><span class="val" style="color: #38bdf8;">{clean_u}</span></div>
                 <div class="row"><span class="label">ชื่อลูกค้า / บริษัท:</span><span class="val">{clean_name}</span></div>
+                <div class="row"><span class="label">สิทธิ์การใช้งาน:</span><span class="val" style="color: #a78bfa;">User (Member) ทั่วไป</span></div>
                 <div class="row"><span class="label">ระยะเวลาที่อนุมัติ:</span><span class="val" style="color: #34d399;">{days} วัน</span></div>
                 <div class="row"><span class="label">ใช้งานได้ถึงวันที่:</span><span class="val" style="color: #38bdf8;">{exp_date}</span></div>
                 <div class="row"><span class="label">รหัสเครื่องที่อนุมัติ:</span><span class="val code">{clean_mch}</span></div>
                 <div class="row"><span class="label">ลำดับโควต้าเครื่อง:</span><span class="val" style="color: #fbbf24;">เครื่องที่ {slot_num} จากทั้งหมด {max_mch} เครื่อง (ผูกแล้ว {total_mch}/{max_mch})</span></div>
 
                 <div class="quota-box">
-                    💻 <b>สถานะโควต้าเครื่อง</b>: เครื่องนี้ได้รับอนุมัติในโควต้า 3 เครื่องเรียบร้อยแล้ว<br>
-                    เครื่องของลูกค้าจะปลดล็อกและเริ่มใช้งานได้โดยอัตโนมัติทันที โดยลูกค้าไม่ต้องพิมพ์หรือวางรหัสใดๆ ครับ
+                    💻 <b>สถานะโควต้า</b>: ผู้ใช้ <b>{clean_u}</b> ได้รับอนุมัติเครื่องนี้เรียบร้อยแล้ว<br>
+                    เครื่องของลูกค้าจะปลดล็อกและเริ่มใช้งานได้โดยอัตโนมัติทันที โดยมีสิทธิ์เป็น User ทั่วไป (ไม่เห็นเมนูแอดมิน) ครับ
                 </div>
 
                 <div class="footer-notice">
@@ -480,21 +580,24 @@ async def api_license_approve(
     )
 
 @app.get("/api/license/check-online")
-async def api_license_check_online(mch: str, request: Request):
+async def api_license_check_online(mch: str, request: Request, response: Response):
     """
     Called by client machines (localhost:8088) to check if admin approved their machine.
     Queries local DB first; if not found, queries the Central VPS Server (119.10.137.52:8000).
-    If approved, automatically saves and activates license locally!
+    If approved, automatically saves license locally, sets member session cookie, and unlocks!
     """
     clean_mch = mch.strip().upper()
     
     # 1. Check local DB first
     local_rec = get_online_activation(clean_mch)
     if local_rec.get("approved"):
+        username = local_rec.get("username", "member")
+        token = create_session_token(username=username, role="member", name=local_rec.get("customer", username))
+        response.set_cookie(key=COOKIE_NAME, value=token, max_age=30*86400, httponly=True, samesite="lax")
+        local_rec["auth_token"] = token
         return local_rec
 
     # 2. Only query Central Server if we are NOT on the Central Server itself!
-    # (Prevents self-referential deadlock when called on 119.10.137.52)
     host_hdr = (request.headers.get("host") or "").lower()
     is_central = (
         "119.10.137.52" in host_hdr
@@ -509,8 +612,11 @@ async def api_license_check_online(mch: str, request: Request):
             if r.status_code == 200:
                 data = r.json()
                 if data.get("approved") and data.get("license_key"):
-                    # Automatically save and activate license on client's computer!
                     save_and_activate_license(data["license_key"])
+                    username = data.get("username", "member")
+                    token = create_session_token(username=username, role="member", name=data.get("customer", username))
+                    response.set_cookie(key=COOKIE_NAME, value=token, max_age=30*86400, httponly=True, samesite="lax")
+                    data["auth_token"] = token
                     return data
         except Exception:
             pass

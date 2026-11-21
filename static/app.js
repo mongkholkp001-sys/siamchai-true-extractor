@@ -1406,9 +1406,10 @@ if (btnCopyMachineId) {
 if (btnCopyLineMsg) {
   btnCopyLineMsg.addEventListener('click', () => {
     if (!cachedCurrentMachineId) return;
+    const username = (document.getElementById('req-lic-username')?.value || '').trim();
     const custName = (document.getElementById('req-lic-name')?.value || '').trim();
     const phone = (document.getElementById('req-lic-phone')?.value || '').trim();
-    let lineMsg = `เรียน คุณมงคล,\nขอเปิดใช้งานโปรแกรม Customer Data Hub สำหรับเครื่องนี้ครับ\n- รหัสเครื่อง (Machine ID): ${cachedCurrentMachineId}`;
+    let lineMsg = `เรียน คุณมงคล,\nขอเปิดใช้งานโปรแกรม Customer Data Hub สำหรับเครื่องนี้ครับ\n- ชื่อผู้ใช้ (Username): ${username || '-'}\n- รหัสเครื่อง (Machine ID): ${cachedCurrentMachineId}`;
     if (custName) lineMsg += `\n- ชื่อลูกค้า/บริษัท: ${custName}`;
     if (phone) lineMsg += `\n- เบอร์โทรติดต่อ: ${phone}`;
     lineMsg += `\nขอบคุณครับ`;
@@ -1434,12 +1435,18 @@ function startPollingForApproval() {
       if (data.approved) {
         clearInterval(approvalPollInterval);
         approvalPollInterval = null;
+        if (data.auth_token) {
+          localStorage.setItem('auth_token', data.auth_token);
+          localStorage.setItem('auth_user', data.username || data.customer || 'member');
+        }
         if (licActionAlert) {
           licActionAlert.className = 'p-3 rounded-xl text-xs bg-emerald-500/20 border border-emerald-500/40 text-emerald-300';
-          licActionAlert.innerHTML = `🎉 <b>ผู้ดูแลระบบกดอนุมัติเรียบร้อยแล้ว!</b><br>สิทธิ์การใช้งานของคุณพร้อมใช้งานแล้ว (หมดอายุ: ${data.expire_date} - เหลือ ${data.days_left} วัน)<br>เครื่องที่ ${data.machine_slot || 1}/${data.max_machines || 3} เครื่อง<br>ระบบกำลังเข้าสู่โปรแกรมอัตโนมัติ...`;
+          licActionAlert.innerHTML = `🎉 <b>ผู้ดูแลระบบกดอนุมัติเรียบร้อยแล้ว!</b><br>บัญชีผู้ใช้: <b>${data.username || data.customer}</b> (สิทธิ์: ผู้ใช้ทั่วไป)<br>เครื่องที่ ${data.machine_slot || 1}/${data.max_machines || 3} เครื่อง (หมดอายุ: ${data.expire_date} - เหลือ ${data.days_left} วัน)<br>ระบบกำลังเข้าสู่โปรแกรมอัตโนมัติ...`;
           licActionAlert.classList.remove('hidden');
         }
         await checkLicenseStatus(false);
+        // Refresh session to apply member role and hide admin controls
+        await checkAuthMe();
         setTimeout(() => {
           if (modalLicense) modalLicense.classList.add('hidden');
         }, 1500);
@@ -1454,13 +1461,24 @@ function startPollingForApproval() {
 const btnSendEmailRequest = document.getElementById('btn-send-email-request');
 if (btnSendEmailRequest) {
   btnSendEmailRequest.addEventListener('click', async () => {
+    const reqLicUser = document.getElementById('req-lic-username');
+    const reqLicPass = document.getElementById('req-lic-password');
     const reqLicName = document.getElementById('req-lic-name');
     const reqLicPhone = document.getElementById('req-lic-phone');
+
+    const username = (reqLicUser ? reqLicUser.value : '').trim();
+    const password = (reqLicPass ? reqLicPass.value : '').trim();
     const custName = (reqLicName ? reqLicName.value : '').trim();
     const phone = (reqLicPhone ? reqLicPhone.value : '').trim();
-    if (!custName) {
-      alert('กรุณาระบุชื่อลูกค้าหรือชื่อบริษัทของคุณก่อนกดส่ง');
-      if (reqLicName) reqLicName.focus();
+
+    if (!username || username.length < 3) {
+      alert('กรุณาระบุชื่อผู้ใช้ (Username) อย่างน้อย 3 ตัวอักษร (ภาษาอังกฤษหรือตัวเลข)');
+      if (reqLicUser) reqLicUser.focus();
+      return;
+    }
+    if (!password || password.length < 4) {
+      alert('กรุณากำหนดรหัสผ่าน (Password) อย่างน้อย 4 ตัวอักษร สำหรับเข้าใช้งานเครื่องนี้');
+      if (reqLicPass) reqLicPass.focus();
       return;
     }
 
@@ -1472,7 +1490,9 @@ if (btnSendEmailRequest) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customer_name: custName,
+          username: username,
+          password: password,
+          customer_name: custName || username,
           phone: phone,
           machine_id: cachedCurrentMachineId
         })
@@ -1481,18 +1501,18 @@ if (btnSendEmailRequest) {
       if (res.ok) {
         if (licActionAlert) {
           licActionAlert.className = 'p-3 rounded-xl text-xs bg-emerald-500/20 border border-emerald-500/40 text-emerald-300';
-          licActionAlert.innerHTML = `✅ <b>ส่งข้อมูลคำขอสำเร็จเรียบร้อย!</b><br>ระบบได้ส่งคำขอพร้อมปุ่มอนุมัติไปยังอีเมล <b>mongkholkp001@gmail.com</b> เรียบร้อยแล้ว<br><div class="mt-2 text-amber-300 flex items-center gap-1.5"><span class="animate-spin text-sm">⏳</span> <span>กำลังรอผู้ดูแลระบบกดอนุมัติในอีเมล... (เมื่ออนุมัติแล้ว ระบบนี้จะปลดล็อคและเริ่มใช้งานให้อัตโนมัติทันที)</span></div>`;
+          licActionAlert.innerHTML = `✅ <b>ส่งคำขอและสร้างบัญชีสำเร็จเรียบร้อย!</b><br>ระบบได้ส่งคำขอของผู้ใช้ <b>${username}</b> ไปยังอีเมล <b>mongkholkp001@gmail.com</b> เรียบร้อยแล้ว<br><div class="mt-2 text-amber-300 flex items-center gap-1.5"><span class="animate-spin text-sm">⏳</span> <span>กำลังรอผู้ดูแลระบบกดอนุมัติในอีเมล... (เมื่ออนุมัติแล้ว ระบบจะปลดล็อคเข้าใช้งานเป็น User ทันที)</span></div>`;
           licActionAlert.classList.remove('hidden');
         }
         btnSendEmailRequest.innerHTML = '⏳ <span>รอผู้ดูแลระบบกดอนุมัติในอีเมล...</span>';
         startPollingForApproval();
       } else {
         alert('ส่งคำขอไม่สำเร็จ: ' + (data.detail || 'เกิดข้อผิดพลาด'));
-        btnSendEmailRequest.innerHTML = '✉️ <span>ส่งคำขอเปิดใช้งานเข้าอีเมล Admin ทันที</span>';
+        btnSendEmailRequest.innerHTML = '✉️ <span>ส่งคำขอเปิดใช้งานและสร้างบัญชีทันที</span>';
       }
     } catch (err) {
       alert('เกิดข้อผิดพลาดในการส่ง: ' + err.message);
-      btnSendEmailRequest.innerHTML = '✉️ <span>ส่งคำขอเปิดใช้งานเข้าอีเมล Admin ทันที</span>';
+      btnSendEmailRequest.innerHTML = '✉️ <span>ส่งคำขอเปิดใช้งานและสร้างบัญชีทันที</span>';
     } finally {
       btnSendEmailRequest.disabled = false;
     }

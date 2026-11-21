@@ -87,6 +87,37 @@ def authenticate_user(username: str, password: str, device_id: str = "", client_
 
     u = get_user(clean_u)
     if not u:
+        # Check online customers database
+        try:
+            from backend.license_manager import load_online_customers, verify_user_password
+            customers = load_online_customers()
+            cust_rec = customers.get(clean_u.lower())
+            if cust_rec:
+                stored_hash = cust_rec.get("password_hash", "")
+                if stored_hash and verify_user_password(clean_p, stored_hash):
+                    # Check expiration date
+                    exp_str = str(cust_rec.get("expire_date", "")).strip()
+                    if exp_str:
+                        try:
+                            exp_dt = datetime.strptime(exp_str, "%Y-%m-%d")
+                            if time.time() > exp_dt.timestamp() + 86399:
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail=f"บัญชีผู้ใช้นี้หมดอายุการใช้งานแล้ว (หมดอายุเมื่อ: {exp_str}) กรุณาติดต่อผู้ดูแลระบบเพื่อต่ออายุ"
+                                )
+                        except ValueError:
+                            pass
+                    return {
+                        "ok": True,
+                        "username": clean_u,
+                        "role": "member",
+                        "name": cust_rec.get("customer_name", clean_u)
+                    }
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
         # Fallback to config default
         cfg = load_config()
         valid_u = cfg.get("web_username", "admin").strip()
