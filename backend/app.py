@@ -592,9 +592,12 @@ async def api_license_check_online(mch: str, request: Request, response: Respons
     local_rec = get_online_activation(clean_mch)
     if local_rec.get("approved"):
         username = local_rec.get("username", "member")
-        token = create_session_token(username=username, role="member", name=local_rec.get("customer", username))
-        response.set_cookie(key=COOKIE_NAME, value=token, max_age=30*86400, httponly=True, samesite="lax")
-        local_rec["auth_token"] = token
+        try:
+            token = create_session_token(username)
+            response.set_cookie(key=COOKIE_NAME, value=token, max_age=30*86400, httponly=True, samesite="lax")
+            local_rec["auth_token"] = token
+        except Exception:
+            pass
         return local_rec
 
     # 2. Only query Central Server if we are NOT on the Central Server itself!
@@ -614,9 +617,12 @@ async def api_license_check_online(mch: str, request: Request, response: Respons
                 if data.get("approved") and data.get("license_key"):
                     save_and_activate_license(data["license_key"])
                     username = data.get("username", "member")
-                    token = create_session_token(username=username, role="member", name=data.get("customer", username))
-                    response.set_cookie(key=COOKIE_NAME, value=token, max_age=30*86400, httponly=True, samesite="lax")
-                    data["auth_token"] = token
+                    try:
+                        token = create_session_token(username)
+                        response.set_cookie(key=COOKIE_NAME, value=token, max_age=30*86400, httponly=True, samesite="lax")
+                        data["auth_token"] = token
+                    except Exception:
+                        pass
                     return data
         except Exception:
             pass
