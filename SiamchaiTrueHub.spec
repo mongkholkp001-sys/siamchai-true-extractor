@@ -34,10 +34,14 @@ hiddenimports = [
     'requests',
     'websockets',
     'backend.license_manager',
+    'backend.browser_factory',
+    'webdriver_manager',
+    'webdriver_manager.chrome',
+    'webdriver_manager.microsoft',
 ]
 
 # Collect all resources from selenium & uvicorn to ensure nothing is missed
-for pkg in ['selenium', 'uvicorn', 'fastapi']:
+for pkg in ['selenium', 'uvicorn', 'fastapi', 'webdriver_manager']:
     tmp_datas, tmp_binaries, tmp_hidden = collect_all(pkg)
     datas.extend(tmp_datas)
     binaries.extend(tmp_binaries)

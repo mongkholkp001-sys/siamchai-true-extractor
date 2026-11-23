@@ -12,6 +12,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from backend.siamchai_crawler import GLOBAL_DRIVER_LOCK
 from selenium.webdriver.common.action_chains import ActionChains
+from backend.browser_factory import create_robust_driver
 
 TRUE_LOGIN_URL = "https://ism-shop.truecorp.co.th/login/"
 TRUE_PREVERIFY_URL = "https://ism-shop.truecorp.co.th/pre-verify/"
@@ -99,57 +100,14 @@ class TrueCrawler:
                 pass
             self.driver = None
 
-        engine, browser_path = self.find_browser()
         if not self.profile_dir or not os.path.exists(self.profile_dir):
             self.profile_dir = tempfile.mkdtemp(prefix="true_hub_profile_")
 
-        args = [
-            "--disable-notifications",
-            "--disable-popup-blocking",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-dev-shm-usage",
-            "--remote-allow-origins=*",
-            f"--user-data-dir={self.profile_dir}",
-            "--window-size=1920,1080",
-            "--disable-blink-features=AutomationControlled",
-            "--blink-settings=imagesEnabled=false",
-            "--disable-extensions",
-            "--disable-gpu",
-            "--disable-software-rasterizer",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--disk-cache-size=10485760",
-            "--media-cache-size=10485760",
-            "--js-flags=--max-old-space-size=512",
-        ]
-        if os.name != "nt":
-            args.extend(["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
-
-        if self.headless or os.name != "nt":
-            args.extend(["--headless=new"])
-
-        options = webdriver.ChromeOptions()
-        if browser_path:
-            options.binary_location = browser_path
-        for a in args:
-            options.add_argument(a)
-
-        driver_path = shutil.which("chromedriver") or ("/usr/bin/chromedriver" if os.path.exists("/usr/bin/chromedriver") else None)
-        last_err = None
-        with GLOBAL_DRIVER_LOCK:
-            for init_attempt in range(1, 4):
-                try:
-                    if driver_path:
-                        from selenium.webdriver.chrome.service import Service
-                        self.driver = webdriver.Chrome(service=Service(driver_path), options=options)
-                    else:
-                        self.driver = webdriver.Chrome(options=options)
-                    break
-                except Exception as e:
-                    last_err = e
-                    time.sleep(2)
-            if not self.driver and last_err:
-                raise last_err
+        self.driver, _ = create_robust_driver(
+            headless=self.headless,
+            profile_dir=self.profile_dir,
+            log_fn=self.log
+        )
 
         self.driver.set_page_load_timeout(60)
         self.driver.implicitly_wait(3)
