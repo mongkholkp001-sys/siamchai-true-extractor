@@ -312,6 +312,14 @@ def siamchai_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: 
             name = res.get("ชื่อ-นามสกุล", "-")
             status = res.get("สถานะ", "-")
             job.add_log(f"🟣 [สยามชัย {i}/{total}] เลข {cid}: {name} ({status})")
+
+            # Periodic checkpoint auto-save every 10 items
+            if i % 10 == 0:
+                try:
+                    job_manager._persist_job(job)
+                except Exception:
+                    pass
+
             time.sleep(0.6)
 
     except Exception as e:
@@ -471,6 +479,14 @@ def true_worker(job: UnifiedJobState, cids: List[str], headless: bool, cfg: dict
             all_phones = res.get("all_phones", "-")
             active_cnt = res.get("active_count", 0)
             job.add_log(f"🔴 [ทรู {i}/{total}] เลข {cid}: พบ {total_cnt} เบอร์ ({all_phones}) [Active: {active_cnt}]")
+
+            # Periodic checkpoint auto-save every 10 items
+            if i % 10 == 0:
+                try:
+                    job_manager._persist_job(job)
+                except Exception:
+                    pass
+
             time.sleep(0.6)
 
     except Exception as e:
