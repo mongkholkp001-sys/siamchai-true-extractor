@@ -114,7 +114,7 @@ $ExePath = Join-Path $TargetDir "SiamchaiTrueHub.exe"
 
 if (Test-Path $ExePath) {
     Write-Host "[5/5] กำลังเริ่มโปรแกรมและเปิดหน้าเว็บ..." -ForegroundColor Green
-    Start-Process -FilePath $ExePath
+    Start-Process -FilePath $ExePath -WorkingDirectory $TargetDir
     Start-Sleep -Seconds 3
     Start-Process "http://localhost:8088/"
 
