@@ -69,9 +69,11 @@ def sync_code_from_cloud():
 sync_code_from_cloud()
 
 # 2. Priority path: local dynamic code folder first
-code_dir = r"C:\Siamchai_True_Hub\code"
-if os.path.exists(os.path.join(code_dir, "backend")):
-    sys.path.insert(0, code_dir)
+exe_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
+for candidate_dir in [os.path.join(exe_dir, "code"), r"C:\Siamchai_True_Hub\code"]:
+    if os.path.exists(os.path.join(candidate_dir, "backend")):
+        sys.path.insert(0, candidate_dir)
+        break
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
