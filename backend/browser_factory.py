@@ -72,11 +72,13 @@ def get_installed_browsers() -> List[Tuple[str, str]]:
 
 def _build_common_args(profile_dir: Optional[str], headless: bool) -> List[str]:
     args = [
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-setuid-sandbox",
         "--disable-notifications",
         "--disable-popup-blocking",
         "--no-first-run",
         "--no-default-browser-check",
-        "--disable-dev-shm-usage",
         "--remote-allow-origins=*",
         "--window-size=1920,1080",
         "--disable-blink-features=AutomationControlled",
@@ -88,12 +90,10 @@ def _build_common_args(profile_dir: Optional[str], headless: bool) -> List[str]:
         "--disk-cache-size=10485760",
         "--media-cache-size=10485760",
         "--js-flags=--max-old-space-size=512",
+        "--remote-debugging-port=0",
     ]
     if profile_dir:
         args.append(f"--user-data-dir={profile_dir}")
-
-    if os.name != "nt":
-        args.extend(["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
 
     if headless or os.name != "nt":
         args.extend(["--headless=new"])
@@ -181,12 +181,20 @@ def create_robust_driver(
         # ---------------- Tier 2: Automatic Fallback to Microsoft Edge ----------------
         # Almost every Windows machine has Edge pre-installed
         if os.name == "nt":
-            for engine, browser_path in (edge_candidates or [("edge", None)]):
+            standard_edge_paths = [
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe")
+            ]
+            default_edge = next((p for p in standard_edge_paths if os.path.exists(p)), None)
+
+            for engine, browser_path in (edge_candidates or [("edge", default_edge)]):
                 try:
                     log("⚠️ กำลังสลับไปใช้ Microsoft Edge อัตโนมัติ...")
                     options = webdriver.EdgeOptions()
-                    if browser_path:
-                        options.binary_location = browser_path
+                    actual_edge_path = browser_path or default_edge
+                    if actual_edge_path and os.path.exists(actual_edge_path):
+                        options.binary_location = actual_edge_path
                     for a in args:
                         options.add_argument(a)
 
