@@ -103,6 +103,9 @@ class UnifiedJobState:
 
             created_time_str = time.strftime("%d/%m/%Y %H:%M:%S", time.localtime(self.created_at))
 
+            effective_sc_status = "stopped" if self.status in ["stopped", "done", "error"] and self.sc_status in ["starting", "running"] else self.sc_status
+            effective_tr_status = "stopped" if self.status in ["stopped", "done", "error"] and self.tr_status in ["starting", "running"] else self.tr_status
+
             return {
                 "job_id": self.job_id,
                 "user": self.user,
@@ -116,7 +119,7 @@ class UnifiedJobState:
                 "elapsed_seconds": elapsed,
 
                 # Siamchai details
-                "sc_status": self.sc_status,
+                "sc_status": effective_sc_status,
                 "sc_current_index": self.sc_current_index,
                 "sc_percent": sc_pct,
                 "sc_current_cid": self.sc_current_cid,
@@ -127,7 +130,7 @@ class UnifiedJobState:
                 "sc_error": self.sc_error,
 
                 # True details
-                "tr_status": self.tr_status,
+                "tr_status": effective_tr_status,
                 "tr_current_index": self.tr_current_index,
                 "tr_percent": tr_pct,
                 "tr_current_cid": self.tr_current_cid,
@@ -761,51 +764,59 @@ class JobQueueManager:
 
     def stop_job(self, user: str, job_id: Optional[str] = None) -> bool:
         target_job = None
+        user_key = user.strip().lower()
         with self.lock:
             if job_id and job_id in self.jobs:
                 target_job = self.jobs[job_id]
-            else:
-                user_key = user.strip().lower()
-                if user_key in self.user_active_jobs:
-                    act_id = self.user_active_jobs[user_key]
-                    if act_id in self.jobs:
-                        target_job = self.jobs[act_id]
+            elif user_key in self.user_active_jobs:
+                act_id = self.user_active_jobs[user_key]
+                if act_id in self.jobs:
+                    target_job = self.jobs[act_id]
 
+            # Clear user active slot unconditionally
+            if user_key in self.user_active_jobs:
+                del self.user_active_jobs[user_key]
+
+            # If not found yet, check all jobs for this user
             if not target_job:
-                return False
+                for j in self.jobs.values():
+                    if j.user.strip().lower() == user_key:
+                        target_job = j
+                        break
 
-            # Check permissions: user can stop their own job, admin can stop any
-            is_admin = (user.strip().lower() == "admin")
-            is_owner = (target_job.user.strip().lower() == user.strip().lower())
-            if not is_admin and not is_owner:
-                return False
-
-            if target_job.status in ["running", "starting", "queued"]:
+            if target_job:
                 target_job.stop_requested = True
-                if target_job.status == "queued":
+                with target_job.lock:
                     target_job.status = "stopped"
-                    if target_job.job_id in self.waiting_queue:
-                        self.waiting_queue.remove(target_job.job_id)
-                    self._update_queue_positions()
-                if target_job.status in ["running", "starting"]:
-                    if target_job.status == "starting":
-                        target_job.status = "stopped"
+                    target_job.sc_status = "stopped"
+                    target_job.tr_status = "stopped"
+                    target_job.queue_position = 0
                 if target_job.siamchai_crawler:
-                    target_job.siamchai_crawler.stop_requested = True
+                    try:
+                        target_job.siamchai_crawler.stop_requested = True
+                        target_job.siamchai_crawler.close()
+                    except Exception:
+                        pass
                 if target_job.true_crawler:
-                    target_job.true_crawler.stop_requested = True
-                target_job.add_log(f"🛑 ได้รับคำสั่งหยุดการทำงานจาก {user}...")
+                    try:
+                        target_job.true_crawler.stop_requested = True
+                        target_job.true_crawler.close()
+                    except Exception:
+                        pass
+                target_job.add_log(f"🛑 ได้รับคำสั่งหยุดการทำงานจาก {user} (ปลดล็อคสถานะสำเร็จ)")
 
-                # Free user active slot immediately
-                u_key = target_job.user.strip().lower()
-                if self.user_active_jobs.get(u_key) == target_job.job_id:
-                    del self.user_active_jobs[u_key]
+                if target_job.job_id in self.waiting_queue:
+                    self.waiting_queue.remove(target_job.job_id)
+                self._update_queue_positions()
 
         if target_job:
-            self._persist_job(target_job)
+            try:
+                self._persist_job(target_job)
+            except Exception:
+                pass
             return True
 
-        return False
+        return True
 
     def reset_user_job(self, user: str, job_id: Optional[str] = None) -> int:
         """

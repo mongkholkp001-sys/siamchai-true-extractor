@@ -273,6 +273,14 @@ btnStop.addEventListener('click', async () => {
     if (res.ok) {
       btnStop.innerHTML = `<svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><span>สั่งหยุดสำเร็จแล้ว</span>`;
       syncServerLogs(['🛑 ส่งคำสั่งหยุดการทำงานเรียบร้อยแล้ว กำลังเซฟผลลัพธ์ล่าสุด...']);
+      // Immediately unlock UI locally and poll fresh status
+      updateUI({ status: 'stopped', sc_status: 'stopped', tr_status: 'stopped' });
+      btnStart.disabled = false;
+      btnStop.disabled = true;
+      try {
+        const sRes = await fetch('/api/status', { headers: { 'Authorization': `Bearer ${authToken}` } });
+        if (sRes.ok) updateUI(await sRes.json());
+      } catch (_) {}
     }
   } catch (err) {
     console.error(err);
