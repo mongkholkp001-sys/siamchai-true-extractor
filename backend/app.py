@@ -729,6 +729,61 @@ async def reset_single_job(
         "reset_count": cnt
     }
 
+@app.post("/api/force-reset")
+async def api_force_reset():
+    """
+    Emergency Force-Reset endpoint:
+    Unconditionally stops all jobs, kills orphan webdriver processes, clears queue,
+    resets memory & disk states to idle, and immediately unblocks the UI.
+    """
+    cnt = job_manager.force_reset_all(admin_user="system_emergency")
+    if os.name == "nt":
+        import subprocess
+        try:
+            subprocess.run("taskkill /F /IM chromedriver.exe /T", shell=True, capture_output=True)
+            subprocess.run("taskkill /F /IM msedgedriver.exe /T", shell=True, capture_output=True)
+        except Exception:
+            pass
+
+    return {
+        "status": "ok",
+        "message": f"รีเซ็ตระบบและบังคับปลดล็อคสถานะสำเร็จ ({cnt} งาน)",
+        "stopped_count": cnt
+    }
+
+APP_VERSION = "2026.11.25.1"
+
+@app.get("/api/client/version")
+async def api_client_version():
+    """Returns the current code bundle version for auto-sync."""
+    return {"version": APP_VERSION, "name": "Customer Data Hub"}
+
+@app.get("/api/client/download-code")
+async def api_client_download_code():
+    """Creates and streams a zip archive of backend/ and static/ for client auto-update."""
+    import io
+    import zipfile
+    from fastapi.responses import Response
+
+    buf = io.BytesIO()
+    app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for folder in ["backend", "static"]:
+            fpath = os.path.join(app_root, folder)
+            if os.path.exists(fpath):
+                for dirpath, _, filenames in os.walk(fpath):
+                    if "__pycache__" in dirpath:
+                        continue
+                    for fn in filenames:
+                        full = os.path.join(dirpath, fn)
+                        rel = os.path.relpath(full, app_root)
+                        z.write(full, rel)
+
+    val = buf.getvalue()
+    return Response(content=val, media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="code_bundle.zip"'
+    })
+
 @app.post("/api/admin/reset-system")
 async def admin_reset_system(admin: dict = Depends(require_admin)):
     cnt = job_manager.force_reset_all(admin_user=admin.get("username", "admin"))

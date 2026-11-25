@@ -17,12 +17,68 @@ try:
 except Exception:
     pass
 
+def sync_code_from_cloud():
+    """Checks central VPS for updated code bundle on startup and auto-updates in 0.5s."""
+    if os.name != "nt":
+        return
+    try:
+        import urllib.request
+        import json
+        import zipfile
+        import io
+
+        cloud_host = "http://119.10.137.52:8000"
+        v_url = f"{cloud_host}/api/client/version"
+        req = urllib.request.Request(v_url, headers={"User-Agent": "HubClient/2.0"})
+        with urllib.request.urlopen(req, timeout=2.5) as r:
+            if r.status != 200:
+                return
+            data = json.loads(r.read().decode())
+            server_ver = data.get("version")
+
+        if not server_ver:
+            return
+
+        code_dir = r"C:\Siamchai_True_Hub\code"
+        v_file = os.path.join(code_dir, "version.txt")
+        local_ver = None
+        if os.path.exists(v_file):
+            try:
+                with open(v_file, "r", encoding="utf-8") as f:
+                    local_ver = f.read().strip()
+            except Exception:
+                pass
+
+        if server_ver != local_ver:
+            print(f"[*] ตรวจพบการอัปเดตระบบอัตโนมัติจากคลาวด์ (v{server_ver})...")
+            dl_url = f"{cloud_host}/api/client/download-code"
+            req_dl = urllib.request.Request(dl_url, headers={"User-Agent": "HubClient/2.0"})
+            with urllib.request.urlopen(req_dl, timeout=8) as dl_resp:
+                if dl_resp.status == 200:
+                    zdata = io.BytesIO(dl_resp.read())
+                    os.makedirs(code_dir, exist_ok=True)
+                    with zipfile.ZipFile(zdata) as z:
+                        z.extractall(code_dir)
+                    with open(v_file, "w", encoding="utf-8") as f:
+                        f.write(server_ver)
+                    print(f"[✓] อัปเดตระบบล่าสุดเรียบร้อยแล้ว (v{server_ver})")
+    except Exception:
+        pass
+
+# 1. Run sync BEFORE importing backend
+sync_code_from_cloud()
+
+# 2. Priority path: local dynamic code folder first
+code_dir = r"C:\Siamchai_True_Hub\code"
+if os.path.exists(os.path.join(code_dir, "backend")):
+    sys.path.insert(0, code_dir)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
 from backend.app import app, get_lan_ip
 
-PORT = int(os.environ.get("PORT", 8000))
+PORT = int(os.environ.get("PORT", 8088))
 
 def open_browser():
     time.sleep(1.8)

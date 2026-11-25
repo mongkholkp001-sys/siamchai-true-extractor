@@ -10,7 +10,12 @@ import sys
 import shutil
 
 if getattr(sys, "frozen", False):
-    BUNDLE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    default_bundle = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    code_bundle = r"C:\Siamchai_True_Hub\code"
+    if os.path.exists(os.path.join(code_bundle, "static")):
+        BUNDLE_DIR = code_bundle
+    else:
+        BUNDLE_DIR = default_bundle
     exe_dir = os.path.dirname(os.path.abspath(sys.executable))
     desktop_dir = os.path.join(os.path.expanduser("~"), "Desktop")
     if os.path.abspath(exe_dir).lower() == os.path.abspath(desktop_dir).lower():

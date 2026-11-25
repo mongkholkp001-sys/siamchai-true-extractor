@@ -287,6 +287,30 @@ btnStop.addEventListener('click', async () => {
   }
 });
 
+const btnForceReset = document.getElementById('btn-force-reset');
+if (btnForceReset) {
+  btnForceReset.addEventListener('click', async () => {
+    btnForceReset.disabled = true;
+    btnForceReset.innerHTML = `<span class="inline-block animate-spin mr-1">🔄</span><span>กำลังรีเซ็ต...</span>`;
+    try {
+      await fetch('/api/force-reset', { method: 'POST' });
+      updateUI({ status: 'stopped', sc_status: 'stopped', tr_status: 'stopped', sc_current_index: 0, tr_current_index: 0 });
+      btnStart.disabled = false;
+      btnStop.disabled = true;
+      syncServerLogs(['🔄 สั่งบังคับรีเซ็ตระบบและปลดล็อคหน้าจอเรียบร้อยแล้ว! พร้อมค้นหาใหม่ได้ทันที']);
+      try {
+        const sRes = await fetch('/api/status', { headers: { 'Authorization': `Bearer ${authToken}` } });
+        if (sRes.ok) updateUI(await sRes.json());
+      } catch (_) {}
+    } catch (e) {
+      console.error(e);
+    } finally {
+      btnForceReset.disabled = false;
+      btnForceReset.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg><span>รีเซ็ต</span>`;
+    }
+  });
+}
+
 const btnUserResetActive = document.getElementById('btn-user-reset-active');
 if (btnUserResetActive) {
   btnUserResetActive.addEventListener('click', async () => {
