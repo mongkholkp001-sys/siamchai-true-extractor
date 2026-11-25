@@ -58,6 +58,11 @@ async def add_no_cache_headers(request: Request, call_next):
     return response
 
 STATIC_DIR = os.path.join(BUNDLE_DIR, "static")
+if os.path.isfile(STATIC_DIR):
+    try:
+        os.remove(STATIC_DIR)
+    except Exception:
+        pass
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

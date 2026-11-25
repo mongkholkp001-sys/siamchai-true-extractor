@@ -24,7 +24,16 @@ Write-Host "[2/5] ล้างสถานะค้างและเตรี�
 $TargetDir = "C:\Siamchai_True_Hub"
 $CodeDir = Join-Path $TargetDir "code"
 $DataDir = Join-Path $TargetDir "data"
+
+# เคลียร์ไฟล์แปลกปลอมถ้า static กลายเป็นไฟล์ธรรมดา
+$StaticDir = Join-Path $CodeDir "static"
+$BackendDir = Join-Path $CodeDir "backend"
+if (Test-Path $StaticDir -PathType Leaf) { Remove-Item -Force $StaticDir -ErrorAction SilentlyContinue }
+if (Test-Path $BackendDir -PathType Leaf) { Remove-Item -Force $BackendDir -ErrorAction SilentlyContinue }
+
 New-Item -ItemType Directory -Force -Path $CodeDir | Out-Null
+New-Item -ItemType Directory -Force -Path $StaticDir | Out-Null
+New-Item -ItemType Directory -Force -Path $BackendDir | Out-Null
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 
 $ActiveJobsFile = Join-Path $DataDir "active_jobs.json"
