@@ -561,6 +561,8 @@ class JobQueueManager:
                     # had its thread terminate with the previous server process. Mark as "stopped".
                     if job.status in ["running", "starting", "queued"]:
                         job.status = "stopped"
+                        job.sc_status = "stopped"
+                        job.tr_status = "stopped"
                         job.queue_position = 0
                         job.add_log("⚠️ บันทึกสถานะล่าสุดก่อนรีสตาร์ทเซิร์ฟเวอร์")
 

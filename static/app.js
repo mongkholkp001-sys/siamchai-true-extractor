@@ -573,7 +573,8 @@ function updateStatusBadge(el, status, queuePos) {
 
 function updateUI(data) {
   const isQueued = (data.status === 'queued');
-  const isBusy = (
+  const isTerminal = (data.status === 'stopped' || data.status === 'done' || data.status === 'error');
+  const isBusy = !isTerminal && (
     data.status === 'running' ||
     data.status === 'starting' ||
     isQueued ||
