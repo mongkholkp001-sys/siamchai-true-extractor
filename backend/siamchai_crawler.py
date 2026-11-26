@@ -538,7 +538,20 @@ class SiamchaiCrawler:
         selectors = [
             "span.flaticon-right244, .flaticon-right244",
             "table tbody tr a.flex-icon",
-            "table tbody tr td:last-child a"
+            "table tbody tr td:last-child a",
+            "table tbody tr td:last-child button",
+            "table tbody tr td a[title*='ดู']",
+            "table tbody tr td a[title*='ราย']",
+            "table tbody tr td a[href*='detail']",
+            "table tbody tr td a[href*='Customer']",
+            "table tbody tr td a[href*='customer']",
+            "table tbody tr td i[class*='chevron']",
+            "table tbody tr td i[class*='arrow']",
+            "table tbody tr td i[class*='angle']",
+            "table tbody tr td:first-child a",
+            "table tbody tr a",
+            "table tbody tr button",
+            "table tbody tr"
         ]
         for sel in selectors:
             try:
@@ -546,7 +559,7 @@ class SiamchaiCrawler:
                 for a in arrows:
                     if a.is_displayed():
                         self.js_click(a)
-                        time.sleep(0.6)
+                        time.sleep(0.8)
                         return True
             except Exception:
                 pass

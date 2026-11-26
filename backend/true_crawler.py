@@ -116,39 +116,86 @@ class TrueCrawler:
         if not self.driver:
             return False
         handled = False
-        # 1. Alert
+
+        # 1. Native Alert
         try:
             alert = self.driver.switch_to.alert
             alert.accept()
-            time.sleep(0.5)
+            time.sleep(0.4)
             handled = True
         except Exception:
             pass
 
-        # 2. Modal Popup
+        # 2. Advanced JavaScript Modal & SweetAlert & Dialog Dismiss
         try:
-            dialogs = self.driver.find_elements(By.XPATH, "//div[@role='dialog' or contains(@class, 'MuiDialog') or contains(@class, 'swal')]")
-            for dlg in dialogs:
-                if dlg.is_displayed():
-                    btn_xpath = ".//button[contains(text(), 'รีเฟรช') or contains(text(), 'Refresh') or contains(text(), 'ลองใหม่อีกครั้ง') or contains(text(), 'ตกลง') or contains(text(), 'ปิด') or contains(text(), 'OK') or contains(text(), 'รับทราบ')]"
-                    buttons = dlg.find_elements(By.XPATH, btn_xpath)
-                    if buttons:
-                        self.driver.execute_script("arguments[0].click();", buttons[0])
-                        time.sleep(0.8)
-                        handled = True
-                        break
+            dismissed = self.driver.execute_script("""
+                let clicked = false;
+                // A. SweetAlert2 / Swal confirm buttons
+                const swalButtons = document.querySelectorAll('.swal2-confirm, .swal2-actions button, button.swal2-styled');
+                for (const b of swalButtons) {
+                    if (b.offsetParent !== null || b.offsetHeight > 0) {
+                        b.click();
+                        return true;
+                    }
+                }
+
+                // B. Any button with Confirm / OK / ตกลง inside modal or when error popup is visible
+                const bodyText = document.body ? (document.body.innerText || '') : '';
+                const hasErrorText = bodyText.includes('ขออภัย') || 
+                                     bodyText.includes('ไม่สามารถดำเนินการได้') || 
+                                     bodyText.includes('กรุณาลองทำรายการใหม่อีกครั้ง') ||
+                                     bodyText.includes('เกิดข้อผิดพลาด') ||
+                                     bodyText.includes('Error');
+
+                const candidateButtons = Array.from(document.querySelectorAll(
+                    'button, [role="button"], a.btn, div.btn, span.btn, .modal button, [class*="dialog"] button, [class*="modal"] button'
+                ));
+
+                for (const btn of candidateButtons) {
+                    const txt = (btn.innerText || btn.textContent || '').trim();
+                    const isConfirmLabel = ['ตกลง', 'OK', 'ok', 'ปิด', 'รับทราบ', 'ลองใหม่อีกครั้ง', 'ยืนยัน', 'Close'].includes(txt);
+                    const insideModal = btn.closest('.modal, [role="dialog"], .swal2-popup, .swal2-container, .popup, [class*="modal"], [class*="dialog"]');
+
+                    if (isConfirmLabel && (insideModal || hasErrorText)) {
+                        btn.click();
+                        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                        return true;
+                    }
+                }
+                return false;
+            """)
+            if dismissed:
+                time.sleep(0.6)
+                handled = True
         except Exception:
             pass
 
-        # 3. Refresh button on error text
+        # 3. XPath fallback for Modal Buttons
+        if not handled:
+            try:
+                confirm_xpath = (
+                    "//div[contains(@class, 'modal') or contains(@class, 'dialog') or contains(@role, 'dialog') or contains(@class, 'swal')]"
+                    "//*[self::button or self::a or @role='button'][contains(., 'ตกลง') or contains(., 'OK') or contains(., 'ปิด') or contains(., 'รับทราบ') or contains(., 'ลองใหม่อีกครั้ง')]"
+                )
+                btns = self.driver.find_elements(By.XPATH, confirm_xpath)
+                for b in btns:
+                    if b.is_displayed():
+                        self.driver.execute_script("arguments[0].click();", b)
+                        time.sleep(0.6)
+                        handled = True
+                        break
+            except Exception:
+                pass
+
+        # 4. Refresh button on error text
         try:
-            refresh_btns = self.driver.find_elements(By.XPATH, "//button[contains(text(), 'Refresh') or contains(text(), 'รีเฟรช') or .//svg[@data-testid='RefreshIcon']]")
+            refresh_btns = self.driver.find_elements(By.XPATH, "//button[contains(., 'Refresh') or contains(., 'รีเฟรช') or .//svg[@data-testid='RefreshIcon']]")
             for r_btn in refresh_btns:
                 if r_btn.is_displayed():
                     body_sub = self.driver.find_element(By.TAG_NAME, "body").text
                     if any(k in body_sub for k in ["ข้อผิดพลาด", "ไม่สามารถดึงข้อมูล", "โหลดข้อมูลไม่สำเร็จ", "กรุณารองใหม่อีกครั้ง", "error"]):
                         self.driver.execute_script("arguments[0].click();", r_btn)
-                        time.sleep(1.5)
+                        time.sleep(1.2)
                         handled = True
                         break
         except Exception:
@@ -276,48 +323,112 @@ class TrueCrawler:
 
     def click_all_down_arrows(self):
         """
-        คลิกเปิดลูกศรลงทุกอันที่มีในหน้า (รวมถึงลูกศรย่อยที่โผล่ขึ้นมาใหม่)
-        พร้อมระบบ Grace Wait ป้องกันการหลุดรอบเมื่อ Sub-table กำลังโหลด
+        คลิกเปิดลูกศรทุกรูปแบบที่มีในหน้า (ลูกศรชี้ลง, ชี้ขวา, ExpandMore, Chevron, ปุ่มกางตารางย่อย)
+        พร้อมระบบตรวจจับอัตโนมัติและรอข้อมูลโหลด
         """
-        click_count = 0
-        max_clicks = 30
-        consecutive_empty = 0
+        max_cycles = 15
+        total_clicked = 0
 
-        while click_count < max_clicks:
+        for cycle in range(max_cycles):
             self.handle_popups_and_errors()
-            unclicked = self.driver.find_elements(
-                By.CSS_SELECTOR,
-                'svg[data-testid="KeyboardArrowDownRoundedIcon"]:not([data-bot-clicked="true"])'
-            )
-            if not unclicked:
-                consecutive_empty += 1
-                if consecutive_empty < 2:
-                    time.sleep(0.6)
-                    continue
-                else:
-                    break
 
-            consecutive_empty = 0
-            target_arrow = unclicked[0]
-            self.driver.execute_script("arguments[0].setAttribute('data-bot-clicked', 'true');", target_arrow)
-            click_count += 1
-            try:
-                ActionChains(self.driver).move_to_element(target_arrow).click().perform()
-            except Exception:
-                try:
-                    self.driver.execute_script("""
-                        const el = arguments[0];
-                        const btn = el.closest('button, [role="button"], tr, td, div') || el.parentElement || el;
+            clicked_in_cycle = self.driver.execute_script("""
+                let clicked = 0;
+                
+                // 1. ตรวจหาปุ่มที่มี aria-expanded="false" (ปุ่มกางตารางย่อย)
+                const unexpanded = document.querySelectorAll('button[aria-expanded="false"], [role="button"][aria-expanded="false"]');
+                for (const btn of unexpanded) {
+                    if (!btn.hasAttribute('data-bot-clicked')) {
+                        btn.setAttribute('data-bot-clicked', 'true');
+                        btn.click();
                         btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                    """, target_arrow)
-                except Exception:
-                    pass
-            time.sleep(0.4)
+                        clicked++;
+                    }
+                }
+                
+                // 2. ตรวจหาลูกศรทุกชนิด (ArrowDown, ArrowRight, ExpandMore, Chevron, ไอคอนลูกศร)
+                const arrowSelectors = [
+                    'svg[data-testid*="Arrow"]:not([data-bot-clicked="true"])',
+                    'svg[data-testid*="Expand"]:not([data-bot-clicked="true"])',
+                    'svg[data-testid*="Chevron"]:not([data-bot-clicked="true"])',
+                    'table tbody tr td:first-child button:not([data-bot-clicked="true"])',
+                    'table tbody tr button:not([data-bot-clicked="true"])',
+                    'button[aria-label*="expand"]:not([data-bot-clicked="true"])',
+                    'button[aria-label*="detail"]:not([data-bot-clicked="true"])',
+                    '[class*="MuiIconButton"]:has(svg):not([data-bot-clicked="true"])',
+                    '[class*="expand"]:not([data-bot-clicked="true"])',
+                    '[class*="Arrow"]:not([data-bot-clicked="true"])'
+                ].join(', ');
+
+                let arrowEls = [];
+                try {
+                    arrowEls = document.querySelectorAll(arrowSelectors);
+                } catch(e) {
+                    arrowEls = document.querySelectorAll('svg[data-testid*="Arrow"], svg[data-testid*="Expand"], svg[data-testid*="Chevron"]');
+                }
+
+                for (const el of arrowEls) {
+                    if (el.getAttribute('data-bot-clicked') === 'true') continue;
+                    
+                    const parentBtn = el.closest('button, [role="button"], tr, td') || el;
+                    if (parentBtn.getAttribute('aria-expanded') === 'true') {
+                        el.setAttribute('data-bot-clicked', 'true');
+                        continue;
+                    }
+                    
+                    el.setAttribute('data-bot-clicked', 'true');
+                    parentBtn.setAttribute('data-bot-clicked', 'true');
+                    
+                    try {
+                        parentBtn.click();
+                        parentBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                        clicked++;
+                    } catch(err) {}
+                }
+                
+                return clicked;
+            """)
+
+            if clicked_in_cycle and clicked_in_cycle > 0:
+                total_clicked += clicked_in_cycle
+                time.sleep(0.5)
+            else:
+                if cycle == 0:
+                    time.sleep(0.4)
+                    continue
+                break
+
+        if total_clicked > 0:
+            time.sleep(0.6)
 
     def extract_phone_numbers(self, current_cid: str = "") -> Tuple[List[str], List[str], Dict[str, str]]:
         active_phones = []
         all_phones = []
         phone_status = {}
+        clean_cid = str(current_cid).replace("-", "").strip()
+
+        def add_phone(ph_str: str, is_active: bool = False, is_cancel: bool = False):
+            digits = re.sub(r'\D', '', str(ph_str))
+            if not digits or digits == clean_cid or digits.startswith("000") or len(digits) not in (9, 10):
+                return
+            if len(digits) == 10 and digits.startswith(('06', '08', '09')):
+                formatted = f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
+            elif len(digits) == 9 and digits.startswith(('02', '03', '04', '05', '07')):
+                formatted = f"{digits[:2]}-{digits[2:5]}-{digits[5:]}"
+            else:
+                formatted = digits
+
+            if formatted not in all_phones:
+                all_phones.append(formatted)
+            if is_active:
+                phone_status[formatted] = "Active"
+                if formatted not in active_phones:
+                    active_phones.append(formatted)
+            elif is_cancel:
+                if formatted not in phone_status:
+                    phone_status[formatted] = "Cancelled"
+            elif formatted not in phone_status:
+                phone_status[formatted] = "พบในระบบ"
 
         # 1. Scan rows in tables
         rows = self.driver.find_elements(By.TAG_NAME, "tr")
@@ -326,37 +437,19 @@ class TrueCrawler:
             if not text:
                 continue
 
-            matches = re.findall(r'0\d{1,2}-?\d{3}-?\d{4}', text)
+            matches = re.findall(r'(?:(?<=\D)|^)(0[2-9]\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4}|0[689]\d{8}|0[2-57]\d{7})(?=\D|$)', text)
             is_active_row = any(k in text for k in ["Active", "active", "ACTIVE", "ใช้งาน"])
+            is_cancel_row = any(k in text for k in ["Cancelled", "Cancel", "ยกเลิก", "Inactive", "Suspended"])
 
             for ph in matches:
-                clean = ph.strip()
-                # Exclude if it's the CID itself or starts with 000
-                if clean == current_cid or clean.replace("-", "") in current_cid or clean.startswith("000"):
-                    continue
-                if clean not in all_phones:
-                    all_phones.append(clean)
+                add_phone(ph, is_active=is_active_row, is_cancel=is_cancel_row)
 
-                if is_active_row:
-                    phone_status[clean] = "Active"
-                    if clean not in active_phones:
-                        active_phones.append(clean)
-                elif any(k in text for k in ["Cancelled", "Cancel", "ยกเลิก", "Inactive", "Suspended"]):
-                    if clean not in phone_status:
-                        phone_status[clean] = "Cancelled"
-                elif clean not in phone_status:
-                    phone_status[clean] = "พบในระบบ"
-
-        # 2. Also scan entire page source for any numbers outside tr
+        # 2. Also scan entire page text and source for any numbers outside tr
         try:
-            page_source = self.driver.page_source
-            extra_matches = re.findall(r'0\d{1,2}-\d{3}-\d{4}', page_source)
+            body_txt = self.driver.find_element(By.TAG_NAME, "body").text
+            extra_matches = re.findall(r'(?:(?<=\D)|^)(0[2-9]\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4}|0[689]\d{8}|0[2-57]\d{7})(?=\D|$)', body_txt)
             for ph in extra_matches:
-                clean = ph.strip()
-                if clean not in all_phones and clean.replace("-", "") not in current_cid and not clean.startswith("000"):
-                    all_phones.append(clean)
-                    if clean not in phone_status:
-                        phone_status[clean] = "Active" if "Active" in page_source else "พบในระบบ"
+                add_phone(ph, is_active="Active" in body_txt)
         except Exception:
             pass
 
@@ -379,14 +472,14 @@ class TrueCrawler:
 
         self.recover_session_if_needed()
 
-        for attempt in range(1, 3):
+        for attempt in range(1, 4):
             if self.stop_requested:
                 break
             try:
                 # 1. หากยังอยู่ที่หน้าผลลัพธ์เดิม ให้กดปุ่มย้อนกลับทันที
                 if "verify-detail" in self.driver.current_url:
                     try:
-                        back_btns = self.driver.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ')]")
+                        back_btns = self.driver.find_elements(By.XPATH, "//button[contains(., 'กลับสู่หน้าตรวจสอบ')]")
                         if back_btns:
                             try:
                                 back_btns[0].click()
@@ -401,7 +494,7 @@ class TrueCrawler:
                     self.perform_login()
                 elif "verify-detail" in self.driver.current_url or "pre-verify" not in self.driver.current_url:
                     self.driver.get(TRUE_PREVERIFY_URL)
-                    time.sleep(0.8)
+                    time.sleep(1.0)
 
                 self.handle_popups_and_errors()
 
@@ -410,7 +503,7 @@ class TrueCrawler:
                 input_box = wait.until(EC.presence_of_element_located((By.ID, "input_card_number")))
                 input_box.clear()
                 input_box.send_keys(cid_str)
-                time.sleep(0.15)
+                time.sleep(0.2)
 
                 # 3. กดปุ่ม ตรวจสอบ
                 submit_btn = self.driver.find_element(By.ID, "button_submit_step")
@@ -419,19 +512,50 @@ class TrueCrawler:
                 except Exception:
                     self.driver.execute_script("arguments[0].click();", submit_btn)
 
-                # 4. รอหน้าผลลัพธ์โหลด
-                WebDriverWait(self.driver, 15).until(
-                    lambda d: "verify-detail" in d.current_url or 
-                              len(d.find_elements(By.CSS_SELECTOR, 'svg[data-testid="KeyboardArrowDownRoundedIcon"]')) > 0 or
-                              len(d.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ')]")) > 0 or
-                              any(k in d.page_source for k in ["ไม่พบข้อมูล", "ไม่พบรายการ", "ไม่มีข้อมูล", "ข้อผิดพลาด"])
-                )
+                # 4. รอหน้าผลลัพธ์โหลด พร้อมตรวจจับ Popup ข้อผิดพลาด
+                wait_result_start = time.time()
+                popup_hit = False
+                while time.time() - wait_result_start < 12:
+                    if self.stop_requested:
+                        break
+
+                    # เช็คว่ามีแจ้งเตือน "ขออภัย" / "ระบบไม่สามารถดำเนินการได้" โผล่ขึ้นมาหรือไม่
+                    try:
+                        page_txt = self.driver.page_source
+                    except Exception:
+                        page_txt = ""
+
+                    if any(k in page_txt for k in ["ขออภัย", "ระบบไม่สามารถดำเนินการได้", "กรุณาลองทำรายการใหม่อีกครั้ง"]):
+                        self.log(f"⚠️ ตรวจพบแจ้งเตือน 'ระบบไม่สามารถดำเนินการได้' สำหรับเลข {cid_str} - กดปิดแจ้งเตือนและเตรียมค้นหาซ้ำ...")
+                        self.handle_popups_and_errors()
+                        popup_hit = True
+                        break
+
+                    # ตรวจสอบว่ามาถึงหน้าผลลัพธ์แล้ว
+                    if "verify-detail" in self.driver.current_url:
+                        break
+                    if len(self.driver.find_elements(By.XPATH, "//button[contains(., 'กลับสู่หน้าตรวจสอบ')]")) > 0:
+                        break
+                    if len(self.driver.find_elements(By.CSS_SELECTOR, 'svg[data-testid*="Arrow"], svg[data-testid*="Expand"], svg[data-testid*="Chevron"]')) > 0:
+                        break
+                    if any(k in page_txt for k in ["ไม่พบข้อมูล", "ไม่พบรายการ", "ไม่มีข้อมูล"]):
+                        break
+
+                    time.sleep(0.3)
+
+                if popup_hit:
+                    time.sleep(1)
+                    # รีเฟรชหน้า pre-verify แล้วลองค้นหาเลขเดิมซ้ำใน attempt ถัดไป
+                    self.driver.get(TRUE_PREVERIFY_URL)
+                    time.sleep(1.2)
+                    self.handle_popups_and_errors()
+                    continue
 
                 # รอให้ข้อมูลสัญญาหรือลูกศรคลี่ตารางแสดงผลครบถ้วน
                 wait_data_start = time.time()
                 while time.time() - wait_data_start < 5:
                     self.handle_popups_and_errors()
-                    has_arrows = len(self.driver.find_elements(By.CSS_SELECTOR, 'svg[data-testid="KeyboardArrowDownRoundedIcon"]')) > 0
+                    has_arrows = len(self.driver.find_elements(By.CSS_SELECTOR, 'svg[data-testid*="Arrow"], svg[data-testid*="Expand"], svg[data-testid*="Chevron"], button[aria-expanded="false"]')) > 0
                     has_rows = len(self.driver.find_elements(By.TAG_NAME, "tr")) > 1
                     try:
                         body_txt = self.driver.find_element(By.TAG_NAME, "body").text
@@ -445,7 +569,7 @@ class TrueCrawler:
 
                 # 5. คลิกลูกศรลงทั้งหมดเพื่อกางตารางเบอร์โทรทั้งหมด
                 self.click_all_down_arrows()
-                time.sleep(0.5)
+                time.sleep(0.6)
                 self.capture_screen()
 
                 # 6. กวาดหาเบอร์ทั้งหมด และเบอร์ Active
@@ -463,7 +587,7 @@ class TrueCrawler:
 
                 # 7. กดกลับสู่หน้าตรวจสอบทันทีสำหรับเลขถัดไป
                 try:
-                    back_btns = self.driver.find_elements(By.XPATH, "//button[contains(text(), 'กลับสู่หน้าตรวจสอบ')]")
+                    back_btns = self.driver.find_elements(By.XPATH, "//button[contains(., 'กลับสู่หน้าตรวจสอบ')]")
                     if back_btns:
                         try:
                             back_btns[0].click()
@@ -487,12 +611,13 @@ class TrueCrawler:
                 }
             except Exception as e:
                 self.log(f"⚠️ ข้อผิดพลาดตรวจสอบทรู เลข {cid_str} (รอบ {attempt}): {e}")
-                if attempt < 2:
+                if attempt < 3:
                     try:
-                        self.recover_driver_session()
-                    except Exception as rec_err:
-                        self.log(f"⚠️ รีสตาร์ทเบราว์เซอร์ทรู: {rec_err}")
-                    time.sleep(1.5)
+                        self.handle_popups_and_errors()
+                        self.driver.get(TRUE_PREVERIFY_URL)
+                        time.sleep(1.2)
+                    except Exception:
+                        pass
                 else:
                     raise e
 
